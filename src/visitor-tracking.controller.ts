@@ -112,6 +112,7 @@ function channelWhere(channelId: number | null, alias?: string): { sql: string; 
 }
 
 import { getRealIp, getResolvedCountry, getResolvedRegion } from './proxy-headers';
+import { scopeChannel } from './channel-scope';
 
 const PLUGIN_ID_FOR_STORE = 'vendure-plugin-visitor-analytics';
 function realIp(req: Request): string | null { return getRealIp(req, getOptions().trustedIpHeaders || []); }
@@ -159,6 +160,18 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
             return true;
         }
         return false;
+    }
+
+    /** The channel an admin read filters on (`null` = all channels), or
+     *  `undefined` after writing a 403 when the admin's roles do not cover
+     *  the requested channel. See `channel-scope.ts`. */
+    private scopedChannel(ctx: RequestContext, req: Request, res: Response): number | null | undefined {
+        const s = scopeChannel(ctx as any, parseChannelId((req.query as any).channelId));
+        if (!s.ok) {
+            res.status(403).json({ error: 'Insufficient permissions for that channel' });
+            return undefined;
+        }
+        return s.channelId;
     }
 
     /**
@@ -482,8 +495,9 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         // Akamai, Fastly all populate these headers when configured) — saves
         // the per-request MaxMind lookup. The service still falls back to a
         // GeoLite2 lookup if the proxy values are absent.
-        const proxyCountry = getResolvedCountry(req);
-        const proxyRegion = getResolvedRegion(req);
+        // Only from a trusted edge — a client could otherwise choose its stored country.
+        const proxyCountry = getResolvedCountry(req, opts.trustedIpHeaders || []);
+        const proxyRegion = getResolvedRegion(req, opts.trustedIpHeaders || []);
 
         const out = await this.tracking.ingest({
             visitorId, sessionId, customerId, channelId, events,
@@ -522,7 +536,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     async summary(@Ctx() ctx: RequestContext, @Req() req: Request, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
         const days = Math.min(Math.max(parseInt(String((req.query as any).days || '30'), 10) || 30, 1), 365);
-        const channelId = parseChannelId((req.query as any).channelId);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
         const w = channelWhere(channelId);
         const rows = await adapterFor(this.connection.rawConnection).query(
             `SELECT DATE(\`createdAt\`) AS day,
@@ -590,7 +605,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         const days = clampInt((req.query as any).days, 30, 1, 365);
         const take = clampInt((req.query as any).take, 25, 1, 500);
         const skip = clampInt((req.query as any).skip, 0, 0, 1_000_000);
-        const channelId = parseChannelId((req.query as any).channelId);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
         const w = channelWhere(channelId);
 
         const rows = await adapterFor(this.connection.rawConnection).query(
@@ -649,7 +665,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         const days = clampInt((req.query as any).days, 30, 1, 365);
         const take = clampInt((req.query as any).take, 25, 1, 500);
         const skip = clampInt((req.query as any).skip, 0, 0, 1_000_000);
-        const channelId = parseChannelId((req.query as any).channelId);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
         const w = channelWhere(channelId);
         const rows = await adapterFor(this.connection.rawConnection).query(
             `SELECT url,
@@ -687,7 +704,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     async funnel(@Ctx() ctx: RequestContext, @Req() req: Request, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
         const days = Math.min(Math.max(parseInt(String((req.query as any).days || '30'), 10) || 30, 1), 365);
-        const channelId = parseChannelId((req.query as any).channelId);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
         const w = channelWhere(channelId);
         const stages = [
             { key: 'visited',    label: 'Any page',          where: `1=1` },
@@ -716,7 +734,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         const days = clampInt((req.query as any).days, 30, 1, 365);
         const take = clampInt((req.query as any).take, 25, 1, 500);
         const skip = clampInt((req.query as any).skip, 0, 0, 1_000_000);
-        const channelId = parseChannelId((req.query as any).channelId);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
         const w = channelWhere(channelId);
         const rows = await adapterFor(this.connection.rawConnection).query(
             `SELECT url,
@@ -762,7 +781,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         const days = clampInt((req.query as any).days, 30, 1, 365);
         const take = clampInt((req.query as any).take, 25, 1, 500);
         const skip = clampInt((req.query as any).skip, 0, 0, 1_000_000);
-        const channelId = parseChannelId((req.query as any).channelId);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
         const w = channelWhere(channelId);
         const rows = await adapterFor(this.connection.rawConnection).query(
             `SELECT type,
@@ -835,7 +855,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     async breakdown(@Ctx() ctx: RequestContext, @Req() req: Request, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
         const days = clampInt((req.query as any).days, 30, 1, 365);
-        const channelId = parseChannelId((req.query as any).channelId);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
         const w = channelWhere(channelId);
         const grouped = (col: string) => adapterFor(this.connection.rawConnection).query(
             `SELECT ${col} AS label, COUNT(DISTINCT \`visitorId\`) AS visitors
@@ -864,7 +885,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     @Get('visitors/live')
     async live(@Ctx() ctx: RequestContext, @Req() req: Request, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
-        const channelId = parseChannelId((req.query as any).channelId);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
         const w = channelWhere(channelId);
         if (!VisitorAnalyticsPlugin.hasPremiumAccess()) {
             return res.status(402).json(premiumFeatureError('vendure-plugin-visitor-analytics'));
@@ -932,9 +954,13 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     @Get('visitors/journey/:visitorId')
     async journey(@Ctx() ctx: RequestContext, @Param('visitorId') visitorId: string, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
+        const scope = scopeChannel(ctx as any, null);
+        if (!scope.ok) return res.status(403).json({ error: 'Insufficient permissions for that channel' });
         const events = await this.connection.rawConnection.getRepository(VisitorEvent).find({
             select: ['id', 'createdAt', 'type', 'url', 'title', 'referrerDomain', 'timeOnPageMs', 'sessionId', 'goalId'] as any,
-            where: { visitorId: String(visitorId).slice(0, 64) },
+            where: scope.channelId == null
+                ? { visitorId: String(visitorId).slice(0, 64) }
+                : { visitorId: String(visitorId).slice(0, 64), channelId: scope.channelId },
             order: { createdAt: 'ASC' },
             take: 1000,
         });
@@ -948,7 +974,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         const days = clampInt((req.query as any).days, 7, 1, 365);
         const take = clampInt((req.query as any).take, 25, 1, 500);
         const skip = clampInt((req.query as any).skip, 0, 0, 1_000_000);
-        const channelId = parseChannelId((req.query as any).channelId);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
         const w = channelWhere(channelId);
         const rows = await adapterFor(this.connection.rawConnection).query(
             `SELECT \`visitorId\`,
@@ -1001,6 +1028,10 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     async profile(@Ctx() ctx: RequestContext, @Param('visitorId') visitorIdRaw: string, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
         const visitorId = String(visitorIdRaw).slice(0, 64);
+        // Restricted (channel-scoped) admins see only their channel's events.
+        const scope = scopeChannel(ctx as any, null);
+        if (!scope.ok) return res.status(403).json({ error: 'Insufficient permissions for that channel' });
+        const w = channelWhere(scope.channelId);
 
         // One row with the latest non-null value of every column.
         const [latest] = await adapterFor(this.connection.rawConnection).query(
@@ -1028,9 +1059,9 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
                     MAX(timezone)           AS timezone,
                     MAX(\`channelId\`)          AS \`channelId\`
              FROM visitor_event
-             WHERE \`visitorId\` = ?
+             WHERE \`visitorId\` = ? ${w.sql}
              GROUP BY \`visitorId\``,
-            [visitorId],
+            [visitorId, ...w.params],
         );
         if (!latest) return res.status(404).json({ error: 'visitor not found' });
 
@@ -1043,11 +1074,11 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
                     SUM(\`timeOnPageMs\`)    AS \`timeMs\`,
                     MIN(CASE WHEN type='pageview' THEN url END) AS \`entryUrl\`
              FROM visitor_event
-             WHERE \`visitorId\` = ?
+             WHERE \`visitorId\` = ? ${w.sql}
              GROUP BY \`sessionId\`
              ORDER BY MIN(\`createdAt\`) DESC
              LIMIT 50`,
-            [visitorId],
+            [visitorId, ...w.params],
         );
 
         let customer: any = null;
@@ -1185,7 +1216,9 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     @Get('goals')
     async listGoals(@Ctx() ctx: RequestContext, @Req() req: Request, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
-        const channelId = parseInt(String((req.query as any).channelId || '1'), 10) || 1;
+        const scopedGoalChannel = this.scopedChannel(ctx, req, res);
+        if (scopedGoalChannel === undefined) return;
+        const channelId = scopedGoalChannel ?? 1;
         const repo = this.connection.rawConnection.getRepository(ConversionGoal);
         const rows = await repo.find({ where: { channelId }, order: { id: 'ASC' } });
         return res.json({ goals: rows });
@@ -1249,7 +1282,9 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     async goalsStats(@Ctx() ctx: RequestContext, @Req() req: Request, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
         const days = Math.min(Math.max(parseInt(String((req.query as any).days || '30'), 10) || 30, 1), 365);
-        const channelId = parseInt(String((req.query as any).channelId || '1'), 10) || 1;
+        const scopedGoalChannel = this.scopedChannel(ctx, req, res);
+        if (scopedGoalChannel === undefined) return;
+        const channelId = scopedGoalChannel ?? 1;
         const rows = await adapterFor(this.connection.rawConnection).query(
             `SELECT g.id, g.name, g.\`urlPattern\`, g.\`valueMinor\`, g.enabled,
                     COUNT(DISTINCT v.\`visitorId\`) AS \`uniqueVisitors\`,
@@ -1277,7 +1312,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
             return res.status(402).json(premiumFeatureError('vendure-plugin-visitor-analytics'));
         }
         const days = Math.min(Math.max(parseInt(String((req.query as any).days || '7'), 10) || 7, 1), 90);
-        const channelId = parseChannelId((req.query as any).channelId);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
         const w = channelWhere(channelId);
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="visitors-${new Date().toISOString().slice(0, 10)}.csv"`);

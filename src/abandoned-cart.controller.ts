@@ -1,9 +1,11 @@
 import { Controller, Get, Post, Query, Param, Req, Res, Body, OnApplicationBootstrap } from '@nestjs/common';
-import { Ctx, RequestContext, Allow, Permission } from '@vendure/core';
+import { Ctx, RequestContext, Allow, Permission, ForbiddenError } from '@vendure/core';
 import { Request, Response } from 'express';
 import { RateLimiter, adapterFor } from '@huloglobal/vendure-licence-sdk';
 import { AbandonedCartService } from './abandoned-cart.service';
 import { getRealIp } from './proxy-headers';
+import { getOptions } from './plugin';
+import { readableChannels, scopeChannel } from './channel-scope';
 import { drained } from './visitor-tracking.controller';
 import { sanitiseOrderCode, verifyOptOutToken } from './recovery-tokens';
 
@@ -43,7 +45,8 @@ export class AbandonedCartController implements OnApplicationBootstrap {
     /** True (and 429 already written) when the caller is over budget.
      *  `cost` = 60 / per-minute allowance, so cost 2 → 30/min, cost 6 → 10/min. */
     private rateLimited(req: Request, res: Response, bucket: string, cost: number): boolean {
-        const ip = getRealIp(req) || '';
+        // Same client IP as the ingest limiter: `req.ip` or the host's trustedIpHeaders.
+        const ip = getRealIp(req, getOptions().trustedIpHeaders || []) || '';
         if (!ip || !this.limiter) return false;
         if (!this.limiter.allow(`${bucket}|${ip}`, cost)) {
             res.setHeader('Retry-After', '60');
@@ -51,6 +54,27 @@ export class AbandonedCartController implements OnApplicationBootstrap {
             return true;
         }
         return false;
+    }
+
+    /** Channel filter for list/summary/export: `null` = all channels
+     *  (default-channel or SuperAdmin admins), else the one channel a
+     *  channel-scoped admin may read. Throws ForbiddenError otherwise. */
+    private listChannel(ctx: RequestContext, raw?: string): number | null {
+        const n = parseInt(String(raw ?? ''), 10);
+        const s = scopeChannel(ctx as any, Number.isFinite(n) && n > 0 ? n : null);
+        if (!s.ok) throw new ForbiddenError();
+        return s.channelId;
+    }
+
+    /** Per-cart actions: a channel-scoped admin may only touch carts of
+     *  channels their roles grant `perm` on. */
+    private async cartInScope(ctx: RequestContext, id: number, perm: string): Promise<boolean> {
+        const allowed = readableChannels(ctx as any, perm);
+        if (allowed === null) return true;
+        if (!Number.isFinite(id)) return false;
+        const conn = adapterFor((this.service as any).connection.rawConnection);
+        const rows: any[] = await conn.query(`SELECT \`channelId\` FROM abandoned_cart WHERE id = ? LIMIT 1`, [id]);
+        return !!rows?.length && allowed.includes(Number(rows[0].channelId));
     }
 
     @Get('abandoned-carts')
@@ -62,11 +86,14 @@ export class AbandonedCartController implements OnApplicationBootstrap {
         @Query('status') status?: string,
         @Query('minValue') minValueRaw?: string,
         @Query('email') email?: string,
+        @Query('channelId') channelRaw?: string,
     ) {
+        const channelId = this.listChannel(ctx, channelRaw);
         const take = Math.min(Math.max(1, parseInt(takeRaw || '25', 10) || 25), 200);
         const skip = Math.max(0, parseInt(skipRaw || '0', 10) || 0);
         const where: string[] = [];
         const params: any[] = [];
+        if (channelId != null) { where.push('`channelId` = ?'); params.push(channelId); }
         if (status) { where.push('status = ?'); params.push(status); }
         if (minValueRaw) {
             const v = parseInt(minValueRaw, 10);
@@ -141,7 +168,9 @@ export class AbandonedCartController implements OnApplicationBootstrap {
 
     @Get('abandoned-carts/summary')
     @Allow(Permission.ReadCustomer)
-    async summary(@Ctx() ctx: RequestContext, @Query('days') daysRaw?: string) {
+    async summary(@Ctx() ctx: RequestContext, @Query('days') daysRaw?: string, @Query('channelId') channelRaw?: string) {
+        const channelId = this.listChannel(ctx, channelRaw);
+        const w = channelId == null ? { sql: '', params: [] as any[] } : { sql: 'AND `channelId` = ?', params: [channelId] };
         const days = Math.min(Math.max(1, parseInt(daysRaw || '30', 10) || 30), 365);
         const since = new Date(Date.now() - days * 86400_000);
         const conn = adapterFor((this.service as any).connection.rawConnection);
@@ -157,13 +186,13 @@ export class AbandonedCartController implements OnApplicationBootstrap {
                 SUM(CASE WHEN status IN ('recovered','converted') THEN \`totalMinor\` ELSE 0 END) AS \`recoveredValueMinor\`,
                 AVG(\`totalMinor\`) AS \`avgValueMinor\`
              FROM abandoned_cart
-             WHERE \`abandonedAt\` >= ?`,
-            [since],
+             WHERE \`abandonedAt\` >= ? ${w.sql}`,
+            [since, ...w.params],
         );
         const s = rows?.[0] || {};
         const total = Number(s.total || 0);
         const rec = Number(s.recoveredCount || 0) + Number(s.convertedCount || 0);
-        const attribution = await this.service.attributionSummary(since);
+        const attribution = await this.service.attributionSummary(since, w.params[0] ?? null);
         return {
             windowDays: days,
             attribution,
@@ -182,7 +211,9 @@ export class AbandonedCartController implements OnApplicationBootstrap {
 
     @Get('abandoned-carts/export.csv')
     @Allow(Permission.ReadCustomer)
-    async exportCsv(@Ctx() ctx: RequestContext, @Res() res: Response, @Query('days') daysRaw?: string) {
+    async exportCsv(@Ctx() ctx: RequestContext, @Res() res: Response, @Query('days') daysRaw?: string, @Query('channelId') channelRaw?: string) {
+        const channelId = this.listChannel(ctx, channelRaw);
+        const w = channelId == null ? { sql: '', params: [] as any[] } : { sql: 'AND `channelId` = ?', params: [channelId] };
         const days = Math.min(Math.max(1, parseInt(daysRaw || '30', 10) || 30), 365);
         const since = new Date(Date.now() - days * 86400_000);
         const conn = adapterFor((this.service as any).connection.rawConnection);
@@ -207,10 +238,10 @@ export class AbandonedCartController implements OnApplicationBootstrap {
                 `SELECT id, \`sessionId\`, \`visitorId\`, \`customerId\`, currency, \`totalMinor\`, \`itemCount\`,
                         email, status, \`abandonedAt\`, \`recoveredAt\`, \`utmSource\`, \`utmMedium\`, \`utmCampaign\`, \`countryCode\`
                  FROM abandoned_cart
-                 WHERE id > ? AND \`abandonedAt\` >= ?
+                 WHERE id > ? AND \`abandonedAt\` >= ? ${w.sql}
                  ORDER BY id
                  LIMIT ?`,
-                [lastId, since, Math.min(CHUNK, MAX_ROWS - written)],
+                [lastId, since, ...w.params, Math.min(CHUNK, MAX_ROWS - written)],
             );
             if (!rows.length) break;
             let out = '';
@@ -258,7 +289,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
         if (!secret) return { ok: false, error: 'opt-out-disabled' };
         const email = verifyOptOutToken(tokenRaw, secret);
         if (!email) return { ok: false, error: 'invalid-token' };
-        await this.service.optOut(email, { source: 'link', ip: getRealIp(req) });
+        await this.service.optOut(email, { source: 'link', ip: getRealIp(req, getOptions().trustedIpHeaders || []) });
         return { ok: true };
     }
 
@@ -296,6 +327,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
     @Allow(Permission.ReadCustomer)
     async detail(@Ctx() ctx: RequestContext, @Param('id') idRaw: string) {
         const id = parseInt(idRaw, 10);
+        if (!(await this.cartInScope(ctx, id, Permission.ReadCustomer))) return { error: 'not-found' };
         const conn = adapterFor((this.service as any).connection.rawConnection);
         const rows: any[] = await conn.query(
             `SELECT * FROM abandoned_cart WHERE id = ? LIMIT 1`,
@@ -407,6 +439,9 @@ export class AbandonedCartController implements OnApplicationBootstrap {
         @Body() body?: { resumeOrderCode?: string | null },
     ) {
         const id = parseInt(idRaw, 10);
+        if (!(await this.cartInScope(ctx, id, Permission.UpdateCustomer))) {
+            return { error: 'recovery-disabled-or-not-found', hint: 'Set abandonment.recoveryLinkSecret in plugin options' };
+        }
         const options = body && body.resumeOrderCode !== undefined
             ? { resumeOrderCode: body.resumeOrderCode === null ? null : sanitiseOrderCode(body.resumeOrderCode) || null }
             : {};
@@ -423,6 +458,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
         @Body() body: { status?: string },
     ) {
         const id = parseInt(idRaw, 10);
+        if (!(await this.cartInScope(ctx, id, Permission.UpdateCustomer))) return { error: 'not-found' };
         const status = String(body?.status || '') as any;
         if (!['recovered', 'dismissed', 'abandoned'].includes(status)) {
             return { error: 'invalid-status' };

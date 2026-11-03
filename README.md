@@ -83,6 +83,14 @@ nav, since 0.19.0), the licence/evaluation banner and the dashboard widget
 > (`retention`); the visitor IP is `req.ip` unless you list proxy headers in
 > `trustedIpHeaders`; `hulo.js` carries first-party visitor/session ids so
 > cross-origin storefronts count uniques correctly.
+>
+> **Since 0.19.2:** a trusted `x-forwarded-for` is read from its right-most
+> entry (the hop your proxy appended); edge country/region headers
+> (`CF-IPCountry`, Akamai, Fastly, `cf-region-code`) are used only when the
+> request came through a proxy Vendure trusts (`apiOptions.trustProxy`) or
+> `trustedIpHeaders` is set — otherwise the GeoLite2 lookup is used. Admin
+> reads are channel-scoped: an administrator whose roles cover only some
+> channels sees only those channels' visitors and abandoned carts.
 
 ## Storefront helpers
 
@@ -247,6 +255,12 @@ Stats at `GET /ees/goals/stats?days=30&channelId=1`.
 Detects sessions that got as far as putting items in the cart but
 never fired `checkout_completed`. Turns them into `AbandonedCart` rows
 you can send a recovery email against.
+
+> **The `email` on an `AbandonedCart` row is unverified.** It comes from the
+> storefront's anonymous `cart_snapshot` beacon, so anyone can put any
+> address there. Do not send reminders to it as-is: mail the Vendure order's
+> customer (`setCustomerForOrder`) or a signed-in customer's address, and
+> limit sends per address.
 
 **How detection works.**
 The plugin runs a worker-only sweep every 5 minutes. It looks at every

@@ -88,7 +88,7 @@ export class JourneyBuffsService {
      * heuristic `intent` label. Used to enrich the Journey drawer
      * with a one-line "what did this session do".
      */
-    async sessionSummary(visitorId: string, limit = 25): Promise<Array<{
+    async sessionSummary(visitorId: string, limit = 25, channelId: number | null = null): Promise<Array<{
         sessionId: string;
         startedAt: string;
         endedAt: string;
@@ -99,6 +99,8 @@ export class JourneyBuffsService {
         rageClicked: boolean;
         intent: 'browse' | 'consider' | 'purchase' | 'abandon' | 'frustrate' | 'bounce';
     }>> {
+        // Channel-scoped admins pass their channel (see channel-scope.ts).
+        const w = channelId == null ? { sql: '', params: [] as any[] } : { sql: 'AND `channelId` = ?', params: [channelId] };
         const rows: any[] = await adapterFor(this.connection.rawConnection).query(
             `SELECT
                 \`sessionId\`,
@@ -110,11 +112,11 @@ export class JourneyBuffsService {
                 MAX(CASE WHEN type = 'event' AND meta LIKE '%"eventType":"cart_snapshot"%' THEN 1 ELSE 0 END) AS \`hadCartSnapshot\`,
                 MAX(CASE WHEN type = 'event' AND meta LIKE '%"eventType":"rage_click"%' THEN 1 ELSE 0 END) AS \`rageClicked\`
              FROM visitor_event
-             WHERE \`visitorId\` = ?
+             WHERE \`visitorId\` = ? ${w.sql}
              GROUP BY \`sessionId\`
              ORDER BY \`startedAt\` DESC
              LIMIT ?`,
-            [visitorId, Math.min(Math.max(1, limit), 200)],
+            [visitorId, ...w.params, Math.min(Math.max(1, limit), 200)],
         );
         return rows.map(r => {
             const start = new Date(r.startedAt);

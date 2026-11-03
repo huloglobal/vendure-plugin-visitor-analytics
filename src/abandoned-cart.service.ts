@@ -687,7 +687,7 @@ export class AbandonedCartService implements OnApplicationBootstrap {
     /** Recovery-link funnel for the admin summary: how many carts got a
      *  link, how many opened it, resumed, converted — and the value of
      *  the carts the link brought back. */
-    async attributionSummary(since: Date): Promise<{
+    async attributionSummary(since: Date, channelId: number | null = null): Promise<{
         linkIssued: number;
         linkOpened: number;
         resumed: number;
@@ -697,6 +697,7 @@ export class AbandonedCartService implements OnApplicationBootstrap {
         optOuts: number;
     }> {
         const conn = adapterFor(this.connection.rawConnection);
+        const w = channelId == null ? { sql: '', params: [] as any[] } : { sql: 'AND `channelId` = ?', params: [channelId] };
         const rows: any[] = await conn.query(
             `SELECT
                 SUM(CASE WHEN \`recoveryStep\` IS NOT NULL THEN 1 ELSE 0 END) AS \`linkIssued\`,
@@ -706,8 +707,8 @@ export class AbandonedCartService implements OnApplicationBootstrap {
                 SUM(CASE WHEN \`recoveryStep\` = 'converted' THEN \`totalMinor\` ELSE 0 END) AS \`convertedViaLinkValueMinor\`,
                 SUM(CASE WHEN status = 'converted' THEN 1 ELSE 0 END) AS \`convertedTotal\`
              FROM abandoned_cart
-             WHERE \`abandonedAt\` >= ?`,
-            [since],
+             WHERE \`abandonedAt\` >= ? ${w.sql}`,
+            [since, ...w.params],
         );
         let optOuts = 0;
         try {

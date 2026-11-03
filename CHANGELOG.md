@@ -5,6 +5,41 @@ documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.2] — 2026-11-03
+
+### Security
+- **Admin reads are scoped per channel.** Every admin endpoint (REST
+  `/ees/visitors/*`, `/ees/goals*` reads, `/ees/journey/*`,
+  `/ees/search-analytics/*`, `/ees/abandoned-carts` list / summary / export /
+  detail / recovery-link / status, and the `huloVisitor*` Admin API queries)
+  used to take the channel from the query string, or read every channel when
+  none was given. An administrator whose roles cover only channel B could
+  therefore read channel A's visitors, IPs, journeys and abandoned carts
+  (e-mail, name, phone) and mint recovery links for them. Now a user with the
+  permission on the default channel (or SuperAdmin) still sees every channel
+  as before; anyone else is limited to the channels their roles grant it on,
+  gets their active channel when they name none, and gets 403 /
+  `FORBIDDEN` for any other channel.
+- **`x-forwarded-for` is read from the right.** With `trustedIpHeaders:
+  ['x-forwarded-for']` the visitor IP (stored IP, rate-limit key) was the
+  left-most entry, which is whatever the client sent. It is now the
+  right-most entry, the hop the host's proxy appended.
+- **Edge geo headers need a trusted edge.** `CF-IPCountry`,
+  `X-Akamai-Edgescape`, `X-Country-Code` and `cf-region-code` were believed
+  from any client, so a visitor could choose its stored country. They are now
+  used only when the immediate peer is a proxy Vendure trusts
+  (`apiOptions.trustProxy`) or `trustedIpHeaders` is configured; otherwise the
+  GeoLite2 lookup runs.
+
+### Fixed
+- The public `recover-cart`, `recover-cart/resume`, `recover-cart/converted`
+  and opt-out endpoints keyed their rate limit on `req.ip` while ingest used
+  `trustedIpHeaders`; on a host that relies on `trustedIpHeaders` every
+  visitor behind the proxy shared one budget (30 restores a minute for the
+  whole shop). They now use the same client IP as ingest.
+- README: the `email` on abandoned-cart rows is unverified beacon input —
+  hosts must not send reminders to it as-is.
+
 ## [0.19.1] — 2026-10-28
 
 ### Changed

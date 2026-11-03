@@ -1,5 +1,6 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { Ctx, RequestContext, Allow, Permission } from '@vendure/core';
+import { Ctx, RequestContext, Allow, Permission, ForbiddenError } from '@vendure/core';
+import { singleChannel } from './channel-scope';
 import { SearchAnalyticsService } from './search-analytics.service';
 
 /**
@@ -20,7 +21,8 @@ export class SearchAnalyticsController {
         @Query('limit') lRaw?: string,
     ) {
         const days = Math.min(Math.max(1, parseInt(dRaw || '7', 10) || 7), 365);
-        const channelId = parseInt(chRaw || '1', 10) || 1;
+        const channelId = singleChannel(ctx as any, chRaw);
+        if (channelId == null) throw new ForbiddenError();
         const limit = parseInt(lRaw || '50', 10) || 50;
         const rows = await this.service.topQueries(days, channelId, limit);
         return { days, channelId, items: rows };
@@ -35,7 +37,8 @@ export class SearchAnalyticsController {
         @Query('limit') lRaw?: string,
     ) {
         const days = Math.min(Math.max(1, parseInt(dRaw || '7', 10) || 7), 365);
-        const channelId = parseInt(chRaw || '1', 10) || 1;
+        const channelId = singleChannel(ctx as any, chRaw);
+        if (channelId == null) throw new ForbiddenError();
         const limit = parseInt(lRaw || '50', 10) || 50;
         const rows = await this.service.zeroResultQueries(days, channelId, limit);
         return { days, channelId, items: rows };
@@ -49,7 +52,8 @@ export class SearchAnalyticsController {
         @Query('channelId') chRaw?: string,
     ) {
         const days = Math.min(Math.max(1, parseInt(dRaw || '7', 10) || 7), 365);
-        const channelId = parseInt(chRaw || '1', 10) || 1;
+        const channelId = singleChannel(ctx as any, chRaw);
+        if (channelId == null) throw new ForbiddenError();
         const summary = await this.service.searchToAddRate(days, channelId);
         return { days, channelId, ...summary };
     }

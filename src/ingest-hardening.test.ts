@@ -26,7 +26,7 @@ describe('getRealIp', () => {
     const req = (headers: Record<string, string>, ip = '10.0.0.9') => ({ headers, ip } as any);
     it('ignores proxy headers unless trusted', () => {
         expect(getRealIp(req({ 'x-forwarded-for': '198.51.100.1' }))).toBe('10.0.0.9');
-        expect(getRealIp(req({ 'x-forwarded-for': '198.51.100.1, 10.0.0.9' }), ['x-forwarded-for'])).toBe('198.51.100.1');
+        expect(getRealIp(req({ 'x-forwarded-for': '198.51.100.1, 10.0.0.9' }), ['x-forwarded-for'])).toBe('10.0.0.9');
         expect(getRealIp(req({}, '::ffff:198.51.100.7'))).toBe('198.51.100.7');
     });
 });

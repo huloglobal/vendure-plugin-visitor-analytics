@@ -8,9 +8,9 @@ import { Request } from 'express';
  *      regardless of how many proxies sit in front of the worker).
  *   2. `True-Client-IP` (Akamai / Cloudflare Enterprise).
  *   3. `X-Real-IP` (nginx / Caddy default when proxying).
- *   4. First entry in `X-Forwarded-For` (RFC 7239 ancestor; the
- *      left-most entry is the original client when the upstream proxy
- *      is trusted).
+ *   4. Right-most entry in `X-Forwarded-For` — the address your own
+ *      proxy appended. Everything to its left was supplied by the client
+ *      and is spoofable (0.19.2; it used to take the left-most entry).
  *   5. Express's `req.ip` — only useful when `app.set('trust proxy', ...)`
  *      has been set on the Vendure host, otherwise this is the socket
  *      address of the last hop.
@@ -31,7 +31,8 @@ export function getRealIp(req: Request, trusted: TrustedIpHeader[] = []): string
     for (const name of trusted) {
         const raw = String(headers[name] || '').trim();
         if (!raw) continue;
-        const value = name === 'x-forwarded-for' ? raw.split(',')[0]?.trim() : raw;
+        // XFF: right-most hop. Proxies append, so the left-most entries are whatever the client sent.
+        const value = name === 'x-forwarded-for' ? raw.split(',').map(p => p.trim()).filter(Boolean).pop() : raw;
         if (value) return value.replace(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i, '$1').slice(0, 64);
     }
     const ip = String((req as any).ip || '').trim();
@@ -39,13 +40,33 @@ export function getRealIp(req: Request, trusted: TrustedIpHeader[] = []): string
 }
 
 /**
+ * True when the edge's geo headers on this request can be believed: the
+ * immediate peer is a proxy the host trusts (Express `trust proxy`, which
+ * Vendure's `apiOptions.trustProxy` sets), or the host told the plugin its
+ * edge sets + strips client IP headers (`trustedIpHeaders`). Otherwise any
+ * client could send `CF-IPCountry: XX` and pick its stored country.
+ */
+export function fromTrustedEdge(req: Request, trusted: TrustedIpHeader[] = []): boolean {
+    if (trusted.length) return true;
+    try {
+        const fn = (req as any).app?.get?.('trust proxy fn');
+        const peer = (req as any).socket?.remoteAddress;
+        return typeof fn === 'function' && !!peer && !!fn(peer, 0);
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Cloudflare / Akamai populate the visitor's resolved country on the
  * inbound request when the corresponding feature is enabled. Reading
  * the upstream value avoids a per-request GeoIP lookup. Returns the
  * ISO 3166-1 alpha-2 country code or `null` if no proxy header is
- * present.
+ * present — or when the request did not come through a trusted edge
+ * (see `fromTrustedEdge`; 0.19.2).
  */
-export function getResolvedCountry(req: Request): string | null {
+export function getResolvedCountry(req: Request, trusted: TrustedIpHeader[] = []): string | null {
+    if (!fromTrustedEdge(req, trusted)) return null;
     const headers = req.headers || {};
     const cf = String(headers['cf-ipcountry'] || '').trim().toUpperCase();
     if (cf && cf !== 'XX' && cf !== 'T1') return cf;
@@ -68,7 +89,8 @@ export function getResolvedCountry(req: Request): string | null {
  * enabled in the dashboard. Returns the bare code without the country
  * prefix, or `null` if unavailable.
  */
-export function getResolvedRegion(req: Request): string | null {
+export function getResolvedRegion(req: Request, trusted: TrustedIpHeader[] = []): string | null {
+    if (!fromTrustedEdge(req, trusted)) return null;
     const headers = req.headers || {};
     const cf = String(headers['cf-region-code'] || '').trim().toUpperCase();
     if (cf && /^[A-Z0-9]{1,4}$/.test(cf)) return cf;
