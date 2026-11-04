@@ -186,6 +186,17 @@ Reliability and security pass — no new features. Two indexes on
 `visitor_event` (`createdAt`, `(channelId, createdAt)`) are declared (run
 your migrations).
 
+### Security
+- **Permissions.** Self-update requires SuperAdmin; licence, purchase,
+  portal and goal changes require UpdateSettings (everything was reachable
+  with ReadCustomer).
+- The rate limiter keys on the same resolved address as everything else;
+  proxy headers are only honoured when listed in `trustedIpHeaders`.
+- CSV exports quote cells that would run as spreadsheet formulas; the
+  journey endpoint returns only the fields the drawer shows.
+- The IP hash salt falls back to `signingSecret` before the public
+  constant.
+
 ### Fixed
 - **Storefront identity across origins.** `hulo.js` now keeps a
   first-party visitor id (`localStorage`) and a 30-minute session id and
@@ -194,9 +205,6 @@ your migrations).
 - **URLs.** `hulo.js` sends `location.href`; events are now stored as
   path + query, so funnels, conversion goals and source reports match
   again.
-- **Permissions.** Self-update requires SuperAdmin; licence, purchase,
-  portal and goal changes require UpdateSettings (everything was reachable
-  with ReadCustomer).
 - The GraphQL visitor summary aggregates bounce rate and duration in SQL
   instead of loading every session row; `SUM(boolean)` replaced with
   `SUM(CASE …)` everywhere (Postgres).
@@ -205,20 +213,14 @@ your migrations).
   to drop the whole batch); oversized `meta` (large cart snapshots) is
   shrunk item-wise instead of cut mid-JSON, so abandoned carts are still
   detected.
-- The rate limiter keys on the same resolved address as everything else;
-  proxy headers are only honoured when listed in `trustedIpHeaders`.
-- Public `trending` is capped at 7 days and memoised for a minute; CSV
-  exports quote cells that would run as spreadsheet formulas; the journey
-  endpoint returns only the fields the drawer shows; goal stats count
-  completions correctly (`COUNT(v.id)`); goal ids and query clamps are
-  validated.
+- Public `trending` is capped at 7 days and memoised for a minute; goal
+  stats count completions correctly (`COUNT(v.id)`); goal ids and query
+  clamps are validated.
 - Abandoned-cart scanner: landing/last URL and referrer are the real first
   and last (the previous expression always returned an empty string), a
   scan cannot overlap the previous one, the Slack post times out after 8 s,
   and the opt-out GET shows a confirm button while the POST performs it
   (mail clients prefetch GETs).
-- The IP hash salt falls back to `signingSecret` before the public
-  constant.
 - Admin UI: the update banner is no longer shown twice, the copy button
   copies a real `@`, the restart poll is cancelled on destroy.
 
