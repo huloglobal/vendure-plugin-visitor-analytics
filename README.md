@@ -1,3 +1,5 @@
+<p align="center"><a href="https://huloglobal.com/vendure-plugins/visitor-analytics/"><img src="https://huloglobal.com/vendure-plugins/logos/visitor-analytics.svg" width="96" height="96" alt="HULO Visitor Analytics logo"></a></p>
+
 # @huloglobal/vendure-plugin-visitor-analytics
 
 Self-hosted full-funnel visitor analytics for Vendure storefronts.
