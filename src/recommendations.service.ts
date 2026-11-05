@@ -52,7 +52,7 @@ export class RecommendationsService {
     private aggregating = false;
 
     private store() {
-        return new LicenceStore((sql, params) => adapterFor(this.connection.rawConnection).query(sql, params));
+        return new LicenceStore((sql, params, opts) => adapterFor(this.connection.rawConnection).query(sql, params, opts));
     }
 
     /**

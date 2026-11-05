@@ -3,6 +3,7 @@ import { Ctx, RequestContext, Allow, Permission, ForbiddenError } from '@vendure
 import { Request, Response } from 'express';
 import { RateLimiter, adapterFor } from '@huloglobal/vendure-licence-sdk';
 import { AbandonedCartService } from './abandoned-cart.service';
+import { noStore } from './no-store';
 import { getRealIp } from './proxy-headers';
 import { getOptions } from './plugin';
 import { readableChannels, scopeChannel } from './channel-scope';
@@ -212,6 +213,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
     @Get('abandoned-carts/export.csv')
     @Allow(Permission.ReadCustomer)
     async exportCsv(@Ctx() ctx: RequestContext, @Res() res: Response, @Query('days') daysRaw?: string, @Query('channelId') channelRaw?: string) {
+        noStore(res);
         const channelId = this.listChannel(ctx, channelRaw);
         const w = channelId == null ? { sql: '', params: [] as any[] } : { sql: 'AND `channelId` = ?', params: [channelId] };
         const days = Math.min(Math.max(1, parseInt(daysRaw || '30', 10) || 30), 365);

@@ -5,6 +5,49 @@ documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.4] — 2026-11-04
+
+### Security
+- **CSV exports are no longer kept by CDNs.** `GET /ees/visitors/export.csv`
+  and `GET /ees/abandoned-carts/export.csv` now send
+  `Cache-Control: private, no-store`. They used to send no caching header,
+  so a CDN that caches by file extension (Cloudflare caches `.csv` by
+  default, even for a signed-in request) could store one admin's export,
+  with visitor journeys or shoppers' e-mail addresses, and serve it to anyone
+  who asked for the same URL. The refusals the handlers send themselves carry
+  the header too: signed out, missing permission or no licence on the visitor
+  export, and a channel the admin cannot read on the cart export. The cart
+  export's 403 for a caller who is signed out or lacks `ReadCustomer` has no
+  `Cache-Control`, because Vendure's permission check sends it before the
+  handler runs; it carries no data. If your admin API is behind a CDN, purge
+  any `/ees/` CSV files it may already hold.
+
+### Fixed
+- **PostgreSQL.** The plugin now requires licence SDK `^0.15.4`. With 0.15.3
+  or older on Postgres, removing an abandoned-cart opt-out always reported
+  success, even when there was no such opt-out. The abandonment scan also
+  logged 2 converted carts whatever it marked, and the first weekly report
+  was skipped (it started a week late). MySQL and MariaDB were not affected.
+- **PostgreSQL: a licence key activated in the admin is now stored.** The
+  plugin's licence store left out the conflict column that the Postgres
+  upsert needs, so saving a key failed. Pasting a key into the admin applied
+  it, answered with a server error and did not store it, so the plugin was
+  unlicensed again after a restart. A key bought from the admin, which
+  installs itself, was not stored either. The co-view sweep stores the end
+  of its last window in the same table, and that save failed too, so
+  `GET /ees/recommendations/aggregate-now` counted again the co-views that
+  the 6-hourly sweep had already counted. MySQL and MariaDB were not
+  affected.
+
+### Package metadata
+- `homepage` is now the product page,
+  https://huloglobal.com/vendure-plugins/visitor-analytics/, instead of the
+  GitHub repository.
+- A shorter `description` that npm shows in full (npm cuts descriptions at
+  255 characters), and keywords for the abandoned-cart, UTM and
+  recommendation features.
+- The npm package no longer includes the plugin's compiled unit tests.
+
 ## [0.19.3] — 2026-11-04
 
 ### Documentation

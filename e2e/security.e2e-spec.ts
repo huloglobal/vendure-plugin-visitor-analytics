@@ -99,6 +99,10 @@ describe('@huloglobal/vendure-plugin-visitor-analytics — security', () => {
         expect(profile.status).toBe(404);
         const journey = await adminClient.fetch(`${BASE}/ees/visitors/journey/${'a'.repeat(32)}`);
         expect((await journey.json()).events).toEqual([]);
+        // 402 without a licence or evaluation, 403 with one; never stored by a cache either way.
+        const csv = await adminClient.fetch(`${BASE}/ees/visitors/export.csv?channelId=1`);
+        expect([402, 403]).toContain(csv.status);
+        expect(csv.headers.get('cache-control')).toBe('private, no-store');
     });
 
     it('REST: a channel-2 admin cannot list, open or act on channel 1 abandoned carts', async () => {
@@ -114,6 +118,7 @@ describe('@huloglobal/vendure-plugin-visitor-analytics — security', () => {
         // (The CSV streams with a Date bind sql.js rejects, so only the refusal is checked here.)
         const csv = await adminClient.fetch(`${BASE}/ees/abandoned-carts/export.csv?channelId=1`);
         expect(csv.status).toBe(403);
+        expect(csv.headers.get('cache-control')).toBe('private, no-store');
         const forcedList = await adminClient.fetch(`${BASE}/ees/abandoned-carts?channelId=1`);
         expect(forcedList.status).toBe(403);
     });

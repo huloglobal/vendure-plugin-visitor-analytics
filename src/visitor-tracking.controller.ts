@@ -10,6 +10,7 @@ import {
 import { Ctx, Permission, ProcessContext, RequestContext, TransactionalConnection } from '@vendure/core';
 import { Request, Response } from 'express';
 import { ConversionGoal } from './conversion-goal.entity';
+import { noStore } from './no-store';
 import { VisitorAnalyticsPlugin, getOptions } from './plugin';
 import { VisitorEvent } from './visitor-event.entity';
 import { VisitorTrackingService } from './visitor-tracking.service';
@@ -193,7 +194,7 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
      * on the first request and refreshed on every subsequent one.
      */
 
-    private licenceStore = new LicenceStore((sql: string, params?: any[]) => adapterFor(this.connection.rawConnection).query(sql, params));
+    private licenceStore = new LicenceStore((sql, params, opts) => adapterFor(this.connection.rawConnection).query(sql, params, opts));
 
     /** Licence/evaluation state for the admin banner. */
     @Get('licence/status')
@@ -1307,6 +1308,7 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     /** Admin: CSV export of recent visitor events with all enrichment. */
     @Get('visitors/export.csv')
     async exportCsv(@Ctx() ctx: RequestContext, @Req() req: Request, @Res() res: Response) {
+        noStore(res);
         if (!requireAdmin(ctx, res)) return;
         if (!VisitorAnalyticsPlugin.hasPremiumAccess()) {
             return res.status(402).json(premiumFeatureError('vendure-plugin-visitor-analytics'));
