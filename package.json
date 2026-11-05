@@ -1,8 +1,8 @@
 {
     "name": "@huloglobal/vendure-plugin-visitor-analytics",
-    "version": "0.19.4",
+    "version": "0.19.5",
     "description": "Self-hosted visitor analytics for Vendure storefronts: pageviews, journeys, funnels, UTM attribution, conversion goals and bot filtering, plus abandoned-cart recovery, product recommendations and site-search analytics. Privacy-first defaults.",
-    "license": "AGPL-3.0-or-later",
+    "license": "AGPL-3.0-only",
     "author": "Wayne Garrison <wayne@garrison.me.uk>",
     "homepage": "https://huloglobal.com/vendure-plugins/visitor-analytics/",
     "repository": {
