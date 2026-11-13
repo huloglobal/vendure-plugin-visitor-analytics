@@ -18,6 +18,12 @@ import { SearchAnalyticsController } from './search-analytics.controller';
 import { JourneyBuffsController } from './journey-buffs.controller';
 import { StorefrontHelperController } from './storefront-helper.controller';
 import { VisitorEngagementService } from './engagement.service';
+import { VaSettingsService } from './va-settings.service';
+import { GoalsService } from './goals.service';
+import { CartCaptureService } from './cart-capture.service';
+import { CartRemindersService } from './cart-reminders.service';
+import { VaPrivacyService } from './privacy.service';
+import { VaSettingsController } from './va-settings.controller';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const PKG_VERSION: string = require('../package.json').version;
@@ -26,10 +32,11 @@ const PKG_NAME = '@huloglobal/vendure-plugin-visitor-analytics';
 export interface VisitorAnalyticsPluginOptions {
     /** Public host of the Vendure server. Used in licence host-match. */
     publicBaseUrl: string;
-    /** JWT licence key. Without it the ingest endpoint accepts events
-     *  and writes basic rows, but the admin analytics endpoints return
-     *  403 — i.e. data collection works for evaluation but you can't
-     *  read the dashboard without a licence. */
+    /** JWT licence key. Without it (after the 14-day evaluation) the plugin
+     *  runs in the free tier: every event is recorded and every report is
+     *  readable (no daily cap since 0.20.0); the live view, abandoned-cart
+     *  detection and recovery, goals, CSV export, the weekly report and the
+     *  set-up checklist need a licence (they answer 402 without one). */
     licenceKey?: string;
 
     // ── Privacy ─────────────────────────────────────────────────────────
@@ -126,6 +133,11 @@ export function getOptions(): typeof DEFAULT_OPTIONS & VisitorAnalyticsPluginOpt
         JourneyBuffsService,
         AbandonedCartScanner,
         VisitorEngagementService,
+        VaSettingsService,
+        GoalsService,
+        CartCaptureService,
+        CartRemindersService,
+        VaPrivacyService,
     ],
     controllers: [
         VisitorTrackingController,
@@ -134,6 +146,7 @@ export function getOptions(): typeof DEFAULT_OPTIONS & VisitorAnalyticsPluginOpt
         SearchAnalyticsController,
         JourneyBuffsController,
         StorefrontHelperController,
+        VaSettingsController,
     ],
     entities: [VisitorEvent, ConversionGoal, AbandonedCart, ProductCoView],
     compatibility: '^3.0.0',
@@ -273,7 +286,7 @@ export class VisitorAnalyticsPlugin {
             // eslint-disable-next-line no-console
             console.warn(
                 `[@huloglobal/vendure-plugin-visitor-analytics] ${status.message}` +
-                ` — Running in FREE tier: 100 events/day cap, conversion goals disabled, live SSE feed disabled, CSV export disabled. Buy a licence at https://elite.charity/licence/buy/${PLUGIN_ID}`,
+                ` — Running in FREE tier after the 14-day evaluation: every event is recorded and every report readable; the live view, abandoned-cart recovery, goals, CSV export, the weekly report and the set-up checklist need a licence. Buy a licence at https://elite.charity/licence/buy/${PLUGIN_ID}`,
             );
         }
 

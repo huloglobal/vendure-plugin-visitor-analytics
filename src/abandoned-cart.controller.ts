@@ -122,7 +122,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
                         \`landingUrl\`, \`lastKnownUrl\`, \`lastKnownReferrer\`,
                         \`pageViews\`, \`dwellSeconds\`,
                         \`firstName\`, \`lastName\`, phone,
-                        \`firstSnapshotAt\`, \`lastSnapshotAt\`
+                        \`firstSnapshotAt\`, \`lastSnapshotAt\`, \`emailVerified\`, \`emailSource\`, \`emailsSent\`, \`lastEmailAt\`
                  FROM abandoned_cart
                  ${clause}
                  ORDER BY \`abandonedAt\` DESC

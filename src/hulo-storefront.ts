@@ -13,7 +13,14 @@
  * with no config. Advanced users can call `hulo.configure({ ... })`
  * to override.
  */
-export const HULO_STOREFRONT_JS = (backendBaseUrl: string, defaultChannelId = 1): string => `
+export interface StorefrontJsFlags {
+    /** Cookieless mode: no ids in localStorage / sessionStorage, no credentials on the beacon. */
+    cookieless?: boolean;
+    /** Report form submissions (form id / name only). */
+    autoForms?: boolean;
+}
+
+export const HULO_STOREFRONT_JS = (backendBaseUrl: string, defaultChannelId = 1, flags: StorefrontJsFlags = {}): string => `
 // hulo storefront helper — @huloglobal/vendure-plugin-visitor-analytics
 // Public domain when served from your own store; do not resell.
 (function (global) {
@@ -26,7 +33,17 @@ export const HULO_STOREFRONT_JS = (backendBaseUrl: string, defaultChannelId = 1)
     autoRageClick: true,
     autoDeadClick: true,
     autoScroll: false,   // not implemented yet — flag reserved
+    cookieless: ${flags.cookieless ? 'true' : 'false'},
+    autoForms: ${flags.autoForms === false ? 'false' : 'true'},
   };
+  // Staff can stop this browser being counted: open any page once with ?hulo_exclude=1 (=0 to undo).
+  var EXCLUDED = false;
+  try {
+    var ex = new URLSearchParams(location.search).get('hulo_exclude');
+    if (ex === '1') localStorage.setItem('hulo_exclude', '1');
+    if (ex === '0') localStorage.removeItem('hulo_exclude');
+    EXCLUDED = localStorage.getItem('hulo_exclude') === '1';
+  } catch (_e) { /* storage blocked */ }
 
   // ── queue + batched send ─────────────────────────────────────────
   // Every helper below pushes into a queue. Flush on requestIdleCallback
@@ -41,6 +58,7 @@ export const HULO_STOREFRONT_JS = (backendBaseUrl: string, defaultChannelId = 1)
   }
   function ids() {
     var vid = null, sid = null;
+    if (CONFIG.cookieless) return {}; // the server identifies the visit; nothing is stored on the device
     try {
       vid = localStorage.getItem('hulo_vid');
       if (!vid || !/^[a-f0-9]{16,64}$/i.test(vid)) { vid = hexId(); localStorage.setItem('hulo_vid', vid); }
@@ -54,6 +72,7 @@ export const HULO_STOREFRONT_JS = (backendBaseUrl: string, defaultChannelId = 1)
     return { visitorId: vid || undefined, sessionId: sid || undefined };
   }
   function enqueue(event) {
+    if (EXCLUDED) return;
     event.url = event.url || location.href;
     event.channelId = event.channelId || CONFIG.channelId;
     QUEUE.push(event);
@@ -80,7 +99,7 @@ export const HULO_STOREFRONT_JS = (backendBaseUrl: string, defaultChannelId = 1)
     } catch (_e) {}
     try {
       fetch(CONFIG.endpoint, {
-        method: 'POST', credentials: 'include', keepalive: true,
+        method: 'POST', credentials: CONFIG.cookieless ? 'omit' : 'include', keepalive: true,
         headers: { 'content-type': 'application/json' },
         body: payload,
       }).catch(function () { /* silent */ });
@@ -318,6 +337,19 @@ export const HULO_STOREFRONT_JS = (backendBaseUrl: string, defaultChannelId = 1)
         }
         hulo.deadClick(cssPathOf(target));
       }, 400);
+    }, { capture: true, passive: true });
+  }
+
+  // ── form submissions (goal tracking) ─────────────────────────────
+  // Only an identifier of the form (id, name, or its action path) is sent — never a field value.
+  if (CONFIG.autoForms) {
+    document.addEventListener('submit', function (e) {
+      var f = e.target;
+      if (!f || !f.tagName || f.tagName.toLowerCase() !== 'form') return;
+      var id = f.getAttribute('id') || f.getAttribute('name') || '';
+      if (!id) { try { id = new URL(f.getAttribute('action') || location.href, location.href).pathname; } catch (_e) { id = ''; } }
+      enqueue({ type: 'form_submit', meta: { formId: String(id).slice(0, 200) } });
+      flush();
     }, { capture: true, passive: true });
   }
 

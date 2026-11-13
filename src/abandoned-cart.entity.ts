@@ -227,6 +227,24 @@ export class AbandonedCart {
     @Column({ type: 'boolean', default: false })
     notificationSent!: boolean;
 
+    // ── Reminder e-mails (0.20.0, premium) ──────────────────────────
+    // Also added at boot by AbandonedCartService.ensureSchema().
+
+    /** The address is verified: the signed-in customer's own, the Vendure order's customer, or typed in this session's own checkout within the per-IP cap. */
+    @Column({ type: 'boolean', default: false })
+    emailVerified!: boolean;
+
+    /** Where the address came from: customer | order | checkout | snapshot. */
+    @Column({ type: 'varchar', length: 16, nullable: true })
+    emailSource!: string | null;
+
+    /** Reminder e-mails sent for this cart (claimed with compare-and-set, so never twice). */
+    @Column({ type: 'int', default: 0 })
+    emailsSent!: number;
+
+    @Column({ type: 'datetime', precision: 3, nullable: true })
+    lastEmailAt!: Date | null;
+
     @CreateDateColumn({ precision: 3 })
     createdAt!: Date;
 

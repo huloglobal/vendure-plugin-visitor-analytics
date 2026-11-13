@@ -2,6 +2,7 @@ import { Controller, Get, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { HULO_STOREFRONT_JS } from './hulo-storefront';
 import { getOptions } from './plugin';
+import { VaSettingsService } from './va-settings.service';
 
 /**
  * Serves the storefront helper at `/ees/hulo.js`. Storefronts embed
@@ -16,12 +17,15 @@ import { getOptions } from './plugin';
  */
 @Controller('ees')
 export class StorefrontHelperController {
+    constructor(private readonly settings: VaSettingsService) {}
+
     @Get('hulo.js')
-    hulo(@Req() req: Request, @Res() res: Response) {
+    async hulo(@Req() req: Request, @Res() res: Response) {
         const opts = getOptions();
         const base = (opts as any).publicBaseUrl
             || `https://${req.headers.host || 'localhost'}`;
-        const js = HULO_STOREFRONT_JS(base, 1);
+        const s = await this.settings.get();
+        const js = HULO_STOREFRONT_JS(base, 1, { cookieless: s.cookieless, autoForms: s.formAutoTracking });
         res.setHeader('content-type', 'application/javascript; charset=utf-8');
         res.setHeader('cache-control', 'public, max-age=600, stale-while-revalidate=86400');
         // Storefront lives on a different origin from the backend —

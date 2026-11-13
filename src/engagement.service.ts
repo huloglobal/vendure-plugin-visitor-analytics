@@ -5,6 +5,7 @@ import {
     smtpTransportFromEnv, WeeklyDigest, WeeklyDigestSettings,
 } from '@huloglobal/vendure-licence-sdk';
 import { VisitorAnalyticsPlugin, getOptions } from './plugin';
+import { PremiumWeeklyDigest } from './premium-digest';
 import {
     ADMIN_ROUTE, buildSetupItems, EMPTY_STATS, PLUGIN_DISPLAY_NAME, PREMIUM_FEATURES, SetupItem, setupTips, SHORT_ID,
     toDigestStats, topRecentStats, UsageStats, widgetStats,
@@ -22,7 +23,7 @@ const DAY_MS = 86_400_000;
 @Injectable()
 export class VisitorEngagementService implements OnApplicationBootstrap, OnModuleDestroy {
     readonly prefs: PluginPrefs;
-    readonly digest: WeeklyDigest;
+    readonly digest: PremiumWeeklyDigest;
     private statsCache: { at: number; value: UsageStats } | null = null;
 
     constructor(
@@ -30,14 +31,14 @@ export class VisitorEngagementService implements OnApplicationBootstrap, OnModul
         private readonly processContext: ProcessContext,
     ) {
         this.prefs = new PluginPrefs((sql, params, opts) => this.query(sql, params, opts), SHORT_ID);
-        this.digest = new WeeklyDigest({
+        this.digest = new PremiumWeeklyDigest({
             pluginId: SHORT_ID,
             pluginName: PLUGIN_DISPLAY_NAME,
             prefs: this.prefs,
             collect: (from, to) => this.collect(from, to),
             send: (to, mail) => this.send(to, mail),
             defaultRecipient: () => this.defaultRecipient(),
-        });
+        }, () => VisitorAnalyticsPlugin.hasPremiumAccess());
     }
 
     private query(sql: string, params?: any[], opts?: { conflictColumns?: string[] }): Promise<any> {
@@ -145,7 +146,13 @@ export class VisitorEngagementService implements OnApplicationBootstrap, OnModul
 
     // ── Set-up checklist ───────────────────────────────────────────────
 
-    async setup(): Promise<{ items: SetupItem[]; complete: boolean }> {
+    /** The set-up checklist (licensed, 0.20.0): empty with `premium: false` on the free tier. */
+    async setup(): Promise<{ items: SetupItem[]; complete: boolean; premium: boolean }> {
+        if (!VisitorAnalyticsPlugin.hasPremiumAccess()) return { items: [], complete: true, premium: false };
+        return { ...(await this.checklist()), premium: true };
+    }
+
+    private async checklist(): Promise<{ items: SetupItem[]; complete: boolean }> {
         const opts = getOptions();
         const ab: any = opts.abandonment || {};
         let hasRecentEvents = false;
@@ -222,7 +229,11 @@ export class VisitorEngagementService implements OnApplicationBootstrap, OnModul
         return (await this.prefs.get('eval.leadEmail')) || null;
     }
 
-    settings(): Promise<WeeklyDigestSettings> { return this.digest.settings(); }
+    async settings(): Promise<WeeklyDigestSettings & { premium: boolean }> {
+        const premium = VisitorAnalyticsPlugin.hasPremiumAccess();
+        const s = await this.digest.settings();
+        return { ...s, nextDueAt: premium ? s.nextDueAt : null, premium };
+    }
 
     updateSettings(patch: { enabled?: boolean; recipient?: string | null }): Promise<WeeklyDigestSettings> {
         return this.digest.updateSettings(patch);

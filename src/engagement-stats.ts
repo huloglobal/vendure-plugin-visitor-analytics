@@ -15,10 +15,11 @@ export const DOCS_URL = 'https://huloglobal.com/vendure-plugins/visitor-analytic
 
 /** What the free tier loses — shown on trial/free banners and in the report. */
 export const PREMIUM_FEATURES: string[] = [
-    'Unlimited events (free tier: 100/day)',
     'Live visitors view',
-    'Abandoned-cart recovery links and Slack alerts',
-    'Conversion goals and CSV export',
+    'Abandoned-cart detection, recovery links, reminder e-mails and Slack alerts',
+    'Server-side cart capture and verified e-mail capture',
+    'Conversion goals (page, form, payment), goal suggestions and CSV export',
+    'Weekly report and set-up checklist',
 ];
 
 /** Usage counters for a period. Numbers only, no personal data. */
@@ -149,7 +150,7 @@ export function buildSetupItems(facts: SetupFacts): { items: SetupItem[]; comple
             key: 'goal',
             label: 'At least one conversion goal',
             done: facts.goalsEnabled > 0,
-            hint: 'Create a goal (e.g. /checkout/confirmation/*) with POST /ees/goals or the admin API so completions and goal value appear on the dashboard. Premium — included in the evaluation.',
+            hint: 'Create a goal in Visitors → Goals (a page such as /checkout/confirmation/**, a form, or a payment) so completions and goal value appear on the dashboard.',
             url: DOCS_URL,
         },
         {

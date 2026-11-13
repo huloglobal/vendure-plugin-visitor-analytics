@@ -45,17 +45,33 @@ const SUBS = (dialect: 'postgres' | 'mysql'): Record<string, string | string[]> 
     'RESULTS_COUNT_TOKEN': RESULTS_COUNT_TOKEN,
     'digitsOnly(conn.dialect, PRODUCT_ID_TOKEN)': digitsOnly(dialect, PRODUCT_ID_TOKEN),
     'digitsOnly(conn.dialect, RESULTS_COUNT_TOKEN)': digitsOnly(dialect, RESULTS_COUNT_TOKEN),
+    // 0.20.0
+    'goalTable': 'conversion_goal',
+    'goalColumn': 'type',
+    'goalDdl': `VARCHAR(16) NOT NULL DEFAULT 'page'`,
+    "verifiedOnly ? 'AND ac.`emailVerified` = TRUE' : ''": ['', 'AND ac.`emailVerified` = TRUE'],
+    'ADDRESS_COOLDOWN_DAYS': '7',
+    'v.sql': '`visitorId` IN (?)',
+    'c.sql': '`customerId` IN (?, ?)',
+    'cartWhere': ['(`emailHash` = ? OR `customerId` IN (?) OR `visitorId` IN (?))', '(`customerId` IN (?) OR `visitorId` IN (?))'],
+    "r.email ? 'email = ? OR ' : ''": ['', 'email = ? OR '],
+    "this.inList('customerId', r.customerIds).sql": 'customerId IN (?)',
+    "this.inList('visitorId', r.visitorIds).sql": 'visitorId IN (?)',
 });
 
 /** Statements the plugin guards with a dialect check at runtime. */
 const SKIP: Array<{ dialect: 'postgres' | 'mysql'; re: RegExp; why: string }> = [
     { dialect: 'postgres', re: /table_schema = DATABASE\(\)/i, why: 'MySQL information_schema scope (dialect-guarded)' },
+    // Prepared fine; executing it again with the same dummy session id only trips the unique key the scanner's insert already used.
+    { dialect: 'postgres', re: /'order', \?, \?, NOW\(3\), 'abandoned'/, why: 'server-capture insert re-uses the dummy sessionId' },
 ];
 
 /** Conflict targets for ON DUPLICATE KEY UPDATE statements, by table (Postgres only). */
 const CONFLICT: Record<string, string[]> = {
     product_co_view: PRODUCT_CO_VIEW_CONFLICT,
     abandoned_cart_opt_out: ['emailHash'],
+    va_order_cart: ['orderId'],
+    va_goal_payment: ['goalId', 'paymentId'],
 };
 
 /** TypeORM creates entity tables with quoted camelCase columns on Postgres — these
@@ -70,7 +86,8 @@ const STAND_IN_DDL = [
         country VARCHAR, region VARCHAR, city VARCHAR, timezone VARCHAR, meta TEXT, "utmSource" VARCHAR, "utmMedium" VARCHAR,
         "utmCampaign" VARCHAR, "utmTerm" VARCHAR, "utmContent" VARCHAR, "referrerDomain" VARCHAR, "isBot" BOOLEAN NOT NULL DEFAULT FALSE, "goalId" INT)`,
     `CREATE TABLE conversion_goal (id SERIAL PRIMARY KEY, "createdAt" TIMESTAMP NOT NULL DEFAULT NOW(), "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW(),
-        "channelId" INT NOT NULL DEFAULT 1, name VARCHAR NOT NULL, "urlPattern" VARCHAR NOT NULL, "valueMinor" INT NOT NULL DEFAULT 0, enabled BOOLEAN NOT NULL DEFAULT TRUE)`,
+        "channelId" INT NOT NULL DEFAULT 1, name VARCHAR NOT NULL, "urlPattern" VARCHAR NOT NULL, "valueMinor" INT NOT NULL DEFAULT 0, enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        target VARCHAR NOT NULL DEFAULT '')`,
     `CREATE TABLE abandoned_cart (id SERIAL PRIMARY KEY, "visitorId" VARCHAR NOT NULL, "sessionId" VARCHAR NOT NULL UNIQUE, "customerId" INT,
         "channelId" INT NOT NULL DEFAULT 1, currency VARCHAR NOT NULL, "totalMinor" INT NOT NULL, "itemCount" INT NOT NULL, "itemsJson" TEXT NOT NULL,
         email VARCHAR, "emailHash" VARCHAR, "firstSnapshotAt" TIMESTAMP(3) NOT NULL, "lastSnapshotAt" TIMESTAMP(3) NOT NULL, "abandonedAt" TIMESTAMP(3) NOT NULL,
@@ -79,14 +96,17 @@ const STAND_IN_DDL = [
         "lastKnownUrl" VARCHAR, "lastKnownReferrer" VARCHAR, "utmSource" VARCHAR, "utmMedium" VARCHAR, "utmCampaign" VARCHAR, "countryCode" VARCHAR,
         "regionCode" VARCHAR, city VARCHAR, ip VARCHAR, "ipHash" VARCHAR, "userAgent" VARCHAR, browser VARCHAR, "deviceType" VARCHAR, "landingUrl" VARCHAR,
         "pageViews" INT, "dwellSeconds" INT, "firstName" VARCHAR, "lastName" VARCHAR, phone VARCHAR, "notificationSent" BOOLEAN NOT NULL DEFAULT FALSE,
+        "emailVerified" BOOLEAN NOT NULL DEFAULT FALSE, "emailSource" VARCHAR, "emailsSent" INT NOT NULL DEFAULT 0, "lastEmailAt" TIMESTAMP(3),
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT NOW(), "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT NOW())`,
     `CREATE TABLE product_co_view ("productIdA" INT NOT NULL, "productIdB" INT NOT NULL, "channelId" INT NOT NULL DEFAULT 1,
         "viewsTogether" INT NOT NULL DEFAULT 0, "lastUpdated" TIMESTAMP(3) NOT NULL, PRIMARY KEY ("productIdA", "productIdB", "channelId"))`,
-    `CREATE TABLE "order" (id SERIAL PRIMARY KEY, code VARCHAR, state VARCHAR, "subTotalWithTax" INT, "orderPlacedAt" TIMESTAMP, "customerId" INT)`,
+    `CREATE TABLE "order" (id SERIAL PRIMARY KEY, code VARCHAR, state VARCHAR, "subTotalWithTax" INT, "shippingWithTax" INT, "currencyCode" VARCHAR, "orderPlacedAt" TIMESTAMP, "customerId" INT)`,
+    `CREATE TABLE order_line (id SERIAL PRIMARY KEY, "orderId" INT, "productVariantId" INT, quantity INT, "listPrice" INT)`,
+    `CREATE TABLE administrator (id SERIAL PRIMARY KEY, "userId" INT, "deletedAt" TIMESTAMP)`,
     `CREATE TABLE customer (id SERIAL PRIMARY KEY, "firstName" VARCHAR, "lastName" VARCHAR, "emailAddress" VARCHAR, "phoneNumber" VARCHAR, "deletedAt" TIMESTAMP, "userId" INT)`,
     `CREATE TABLE order_channels_channel ("orderId" INT, "channelId" INT, PRIMARY KEY ("orderId", "channelId"))`,
     `CREATE TABLE channel (id SERIAL PRIMARY KEY, code VARCHAR, token VARCHAR)`,
-    `CREATE TABLE product_variant (id SERIAL PRIMARY KEY, "productId" INT, "deletedAt" TIMESTAMP)`,
+    `CREATE TABLE product_variant (id SERIAL PRIMARY KEY, "productId" INT, "deletedAt" TIMESTAMP, sku VARCHAR)`,
     `CREATE TABLE product_variant_translation (id SERIAL PRIMARY KEY, "baseId" INT, "languageCode" VARCHAR, name VARCHAR)`,
     `CREATE TABLE product (id SERIAL PRIMARY KEY, "deletedAt" TIMESTAMP)`,
     `CREATE TABLE product_translation (id SERIAL PRIMARY KEY, "baseId" INT, "languageCode" VARCHAR, name VARCHAR, slug VARCHAR)`,

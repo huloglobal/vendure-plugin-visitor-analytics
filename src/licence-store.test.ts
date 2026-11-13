@@ -62,7 +62,7 @@ describe('licence key store on PostgreSQL', () => {
         vi.spyOn(VisitorAnalyticsPlugin, 'activateRuntimeLicence').mockReturnValue({ valid: true, message: 'Licensed' } as any);
         const db = postgres();
         const res = fakeRes();
-        await new VisitorTrackingController(db.connection, {} as any, {} as any, {} as any).licenceActivate(admin, res, { key: 'a.licence.key' });
+        await new VisitorTrackingController(db.connection, {} as any, {} as any, {} as any, {} as any, {} as any).licenceActivate(admin, res, { key: 'a.licence.key' });
         expect(res.statusCode).toBe(200);
         expect(res.body).toEqual({ licensed: true, message: 'Licensed' });
         expect(db.upserts).toEqual([expect.stringContaining('ON CONFLICT (pluginId) DO UPDATE SET')]);

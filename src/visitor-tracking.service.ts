@@ -1,11 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { TransactionalConnection } from '@vendure/core';
-import { boundedMeta, normaliseUrl } from './ingest-utils';
+import { adapterFor } from '@huloglobal/vendure-licence-sdk';
+import { boundedMeta, matchGoal, normaliseUrl, objectMeta } from './ingest-utils';
+export { matchGoal, objectMeta } from './ingest-utils';
 import { createHash, randomUUID } from 'crypto';
 import { ConversionGoal } from './conversion-goal.entity';
 import { anonymizeIp, isBotUa } from './detect-bot';
 import { getOptions } from './plugin';
 import { matchUrl } from './url-pattern';
+import { stripPrivateParams } from './privacy-utils';
 import { VisitorEvent } from './visitor-event.entity';
 
 const loggerCtx = 'VisitorTrackingService';
@@ -33,6 +36,10 @@ interface IngestInput {
      *  event and avoids a disk read. */
     proxyCountry?: string | null;
     proxyRegion?: string | null;
+    /** URL parameter stripping (0.20.0): built-in private parameters and the admin's extra list. */
+    strip?: { defaults: boolean; extra: string[] };
+    /** Premium access: form goals are matched only then (page goals always). */
+    premium?: boolean;
 }
 
 interface EnrichedContext {
@@ -80,26 +87,31 @@ export class VisitorTrackingService {
 
         const goals = await this.loadGoals(input.channelId);
 
+        const strip = (u: string | null): string | null => {
+            if (!u || !input.strip) return u;
+            return stripPrivateParams(u, input.strip.extra || [], input.strip.defaults !== false);
+        };
         const rows = input.events.map(e => {
             const utm = parseUtm(e.url);
-            const matchingGoal = e.type === 'pageview'
-                ? goals.find(g => matchUrl(g.urlPattern, e.url || ''))
-                : undefined;
+            const url = strip(normaliseUrl(e.url)) || '';
+            const referrer = e.referrer ? strip(String(e.referrer).slice(0, 2048)) : null;
+            const meta = objectMeta(e.meta);
+            const matchingGoal = matchGoal(goals, String(e.type || ''), url, meta, !!input.premium);
             return repo.create({
                 visitorId: input.visitorId,
                 sessionId: input.sessionId,
                 customerId: input.customerId,
                 channelId: input.channelId,
                 type: String(e.type || 'pageview').slice(0, 32),
-                url: normaliseUrl(e.url),
+                url,
                 title: e.title ? String(e.title).slice(0, 500) : null,
-                referrer: e.referrer ? String(e.referrer).slice(0, 2048) : null,
+                referrer,
                 referrerDomain: extractReferrerDomain(e.referrer),
                 timeOnPageMs: typeof e.timeOnPageMs === 'number' && e.timeOnPageMs >= 0
                     ? Math.min(e.timeOnPageMs, 60 * 60_000)
                     : null,
                 ...enriched,
-                meta: e.meta ? boundedMeta(e.meta) : null,
+                meta: meta ? boundedMeta(meta) : null,
                 utmSource: utm.source ? utm.source.slice(0, 100) : null,
                 utmMedium: utm.medium ? utm.medium.slice(0, 100) : null,
                 utmCampaign: utm.campaign ? utm.campaign.slice(0, 200) : null,
@@ -214,6 +226,46 @@ export class VisitorTrackingService {
     }
 
     newId(): string { return randomUUID().replace(/-/g, ''); }
+
+    /** Cookieless visitor → its open session (30-minute idle window), in memory first, then the latest event. */
+    private cookielessSessions = new Map<string, { sid: string; at: number }>();
+    async cookielessSession(visitorId: string, now = Date.now()): Promise<string> {
+        const IDLE = 30 * 60_000;
+        const hit = this.cookielessSessions.get(visitorId);
+        let sid: string | null = hit && now - hit.at < IDLE ? hit.sid : null;
+        if (!sid) {
+            try {
+                const rows: any[] = await adapterFor(this.connection.rawConnection).query(
+                    `SELECT \`sessionId\` FROM visitor_event WHERE \`visitorId\` = ? AND \`createdAt\` >= ? ORDER BY \`createdAt\` DESC LIMIT 1`,
+                    [visitorId, new Date(now - IDLE)],
+                );
+                if (rows?.[0]?.sessionId) sid = String(rows[0].sessionId);
+            } catch { /* new session */ }
+        }
+        if (!sid) sid = this.newId();
+        if (this.cookielessSessions.size > 50_000) this.cookielessSessions.clear();
+        this.cookielessSessions.set(visitorId, { sid, at: now });
+        return sid;
+    }
+
+    /** userId → is an administrator (staff exclusion), cached 10 minutes. */
+    private staffByUser = new Map<string, { staff: boolean; exp: number }>();
+    async isStaffUser(userId: string | number): Promise<boolean> {
+        const key = String(userId);
+        const now = Date.now();
+        const hit = this.staffByUser.get(key);
+        if (hit && hit.exp > now) return hit.staff;
+        let staff = false;
+        try {
+            const rows: any[] = await adapterFor(this.connection.rawConnection).query(
+                `SELECT id FROM administrator WHERE \`userId\` = ? AND \`deletedAt\` IS NULL LIMIT 1`, [userId],
+            );
+            staff = !!rows?.length;
+        } catch { staff = false; }
+        if (this.staffByUser.size > 5000) this.staffByUser.clear();
+        this.staffByUser.set(key, { staff, exp: now + 10 * 60_000 });
+        return staff;
+    }
 }
 
 function isBot(ua: string): boolean {
@@ -303,3 +355,4 @@ function extractReferrerDomain(referrer: string | undefined | null): string | nu
         return null;
     }
 }
+

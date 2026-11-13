@@ -38,4 +38,16 @@ export class ConversionGoal extends VendureEntity {
 
     @Column({ type: 'boolean', default: true })
     enabled!: boolean;
+
+    /**
+     * 0.20.0: `page` (a page view whose URL matches `urlPattern`), `form` (a
+     * `form_submit` whose form id / name matches `target`, optionally on pages
+     * matching `urlPattern`) or `payment` (a Vendure payment settles; `target`
+     * optionally matches the payment method code). Form and payment goals are premium.
+     */
+    @Column({ type: 'varchar', length: 16, default: 'page' })
+    type!: string;
+
+    @Column({ type: 'varchar', length: 200, default: '' })
+    target!: string;
 }

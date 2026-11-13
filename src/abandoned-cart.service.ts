@@ -16,6 +16,9 @@ import {
 
 const loggerCtx = 'HuloAbandonedCartService';
 
+/** Distinct addresses one network (IP hash) may attach to carts in 24 hours before they stop counting as verified. */
+export const MAX_EMAILS_PER_IP = 3;
+
 /** Payload of a `cart_snapshot` custom event as posted by the storefront. */
 export interface CartSnapshotMeta {
     currency?: string;
@@ -131,6 +134,11 @@ export class AbandonedCartService implements OnApplicationBootstrap {
             ['convertedAt', 'DATETIME(3) NULL'],
             ['convertedOrderId', 'INT NULL'],
             ['convertedOrderCode', 'VARCHAR(32) NULL'],
+            // 0.20.0: verified e-mail capture + reminder e-mails.
+            ['emailVerified', 'BOOLEAN NOT NULL DEFAULT FALSE'],
+            ['emailSource', 'VARCHAR(16) NULL'],
+            ['emailsSent', 'INT NOT NULL DEFAULT 0'],
+            ['lastEmailAt', 'DATETIME(3) NULL'],
         ];
         for (const [name, type] of cols) {
             await this.addColumnIfMissing(conn, 'abandoned_cart', name, type);
@@ -255,7 +263,8 @@ export class AbandonedCartService implements OnApplicationBootstrap {
                 agg.*,
                 c.\`firstName\`    AS \`custFirstName\`,
                 c.\`lastName\`     AS \`custLastName\`,
-                c.\`phoneNumber\`  AS \`custPhone\`
+                c.\`phoneNumber\`  AS \`custPhone\`,
+                c.\`emailAddress\` AS \`custEmail\`
              FROM (SELECT
                 ve.\`sessionId\`,
                 MAX(ve.\`visitorId\`) AS \`visitorId\`,
@@ -283,6 +292,7 @@ export class AbandonedCartService implements OnApplicationBootstrap {
                 -- Total pageview events in the same session — cheap
                 -- "high-intent vs quick-bounce" facet in the admin.
                 SUM(CASE WHEN ve.type = 'pageview' THEN 1 ELSE 0 END) AS \`pageViews\`,
+                MAX(CASE WHEN ve.type = 'pageview' AND ve.url LIKE '%checkout%' THEN 1 ELSE 0 END) AS \`reachedCheckout\`,
                 SUBSTRING_INDEX(GROUP_CONCAT(ve.meta ORDER BY ve.\`createdAt\` DESC SEPARATOR '¦'), '¦', 1) AS \`lastMeta\`
              FROM visitor_event ve
              WHERE ve.\`sessionId\` IN (
@@ -321,7 +331,14 @@ export class AbandonedCartService implements OnApplicationBootstrap {
             const itemCount = Number(meta.itemCount ?? meta.items?.length ?? 0);
             if (!itemCount) continue; // empty cart isn't abandonment
             const items = Array.isArray(meta.items) ? meta.items : [];
-            const email = (meta.email || '').trim().toLowerCase() || null;
+            const snapshotEmail = (meta.email || '').trim().toLowerCase() || null;
+            // Verified e-mail capture (0.20.0): the signed-in customer's own address wins; a typed
+            // address counts as verified only when this session opened the checkout itself and its
+            // network has not attached more than MAX_EMAILS_PER_IP addresses in 24 hours.
+            const verdict = await this.verifyEmail(conn, {
+                customerEmail: c.custEmail || null, snapshotEmail, reachedCheckout: Number(c.reachedCheckout || 0) > 0, ipHash: c.ipHash || null,
+            });
+            const email = verdict.email;
             const emailHash = email ? createHash('sha256').update(email).digest('hex') : null;
 
             const existing: any[] = await conn.query(
@@ -357,6 +374,8 @@ export class AbandonedCartService implements OnApplicationBootstrap {
                         \`firstName\` = COALESCE(?, \`firstName\`),
                         \`lastName\` = COALESCE(?, \`lastName\`),
                         phone = COALESCE(?, phone),
+                        \`emailVerified\` = CASE WHEN ? THEN TRUE ELSE \`emailVerified\` END,
+                        \`emailSource\` = COALESCE(?, \`emailSource\`),
                         \`updatedAt\` = NOW(3)
                      WHERE id = ?`,
                     [
@@ -370,6 +389,7 @@ export class AbandonedCartService implements OnApplicationBootstrap {
                         Number(c.pageViews || 0) || null,
                         dwellSeconds,
                         c.custFirstName || null, c.custLastName || null, c.custPhone || null,
+                        verdict.verified, email ? verdict.source : null,
                         existing[0].id,
                     ],
                 );
@@ -388,6 +408,7 @@ export class AbandonedCartService implements OnApplicationBootstrap {
                     \`userAgent\`, browser, \`deviceType\`,
                     \`pageViews\`, \`dwellSeconds\`,
                     \`firstName\`, \`lastName\`, phone,
+                    \`emailVerified\`, \`emailSource\`,
                     \`notificationSent\`, \`createdAt\`, \`updatedAt\`
                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3), 'abandoned',
                            ?, ?, ?, ?, ?, ?, ?,
@@ -395,6 +416,7 @@ export class AbandonedCartService implements OnApplicationBootstrap {
                            ?, ?, ?,
                            ?, ?,
                            ?, ?, ?,
+                           ?, ?,
                            FALSE, NOW(3), NOW(3))`,
                 [
                     c.visitorId, c.sessionId, c.customerId, c.channelId || 1,
@@ -407,6 +429,7 @@ export class AbandonedCartService implements OnApplicationBootstrap {
                     c.userAgent, c.browser, deviceType,
                     Number(c.pageViews || 0) || null, dwellSeconds,
                     c.custFirstName || null, c.custLastName || null, c.custPhone || null,
+                    verdict.verified, email ? verdict.source : null,
                 ],
             );
             opened += 1;
@@ -436,6 +459,28 @@ export class AbandonedCartService implements OnApplicationBootstrap {
             );
         }
         return { opened, converted: convertedCount, slacked };
+    }
+
+    /**
+     * Which address to keep for a cart, and whether reminders may use it. The
+     * snapshot address is always kept (hosts read it); `verified` is what the
+     * reminder e-mails require.
+     */
+    async verifyEmail(conn: ReturnType<typeof adapterFor>, f: { customerEmail: string | null; snapshotEmail: string | null; reachedCheckout: boolean; ipHash: string | null }): Promise<{ email: string | null; verified: boolean; source: 'customer' | 'checkout' | 'snapshot' }> {
+        const customer = normaliseEmail(f.customerEmail || '');
+        if (customer) return { email: customer, verified: true, source: 'customer' };
+        const typed = normaliseEmail(f.snapshotEmail || '');
+        if (!typed) return { email: null, verified: false, source: 'snapshot' };
+        if (!f.reachedCheckout) return { email: typed, verified: false, source: 'snapshot' };
+        if (f.ipHash) {
+            const rows: any[] = await conn.query(
+                `SELECT COUNT(DISTINCT \`emailHash\`) AS n FROM abandoned_cart
+                 WHERE \`ipHash\` = ? AND \`emailHash\` IS NOT NULL AND \`emailHash\` <> ? AND \`createdAt\` >= DATE_SUB(NOW(), INTERVAL 24 HOUR)`,
+                [f.ipHash, hashEmail(typed)],
+            ).catch(() => [{ n: MAX_EMAILS_PER_IP }]);
+            if (Number(rows?.[0]?.n || 0) >= MAX_EMAILS_PER_IP) return { email: typed, verified: false, source: 'snapshot' };
+        }
+        return { email: typed, verified: true, source: 'checkout' };
     }
 
     /**

@@ -4,6 +4,7 @@ import { SharedModule } from '@vendure/admin-ui/core';
 import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
 import { VisitorsComponent } from './components/visitors.component';
+import { VisitorsToolsComponent } from './components/visitors-tools.component';
 
 @NgModule({
     imports: [
@@ -12,6 +13,6 @@ import { VisitorsComponent } from './components/visitors.component';
             { path: '', pathMatch: 'full', component: VisitorsComponent, data: { breadcrumb: 'Visitors' } },
         ]),
     ],
-    declarations: [VisitorsComponent],
+    declarations: [VisitorsComponent, VisitorsToolsComponent],
 })
 export class VisitorsModule {}

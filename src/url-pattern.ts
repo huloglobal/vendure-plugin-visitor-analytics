@@ -31,3 +31,14 @@ export function matchUrl(pattern: string, url: string): boolean {
         return false;
     }
 }
+
+/**
+ * Whole-value glob for form and payment goal targets: `*` matches anything
+ * (including `/`), everything else literally, case-insensitive. An empty
+ * glob matches every value.
+ */
+export function globMatch(glob: string, value: string): boolean {
+    if (!glob) return true;
+    const re = new RegExp(`^${glob.split('*').map(p => p.replace(/[.+?^${}()|[\]\\/]/g, '\\$&')).join('.*')}$`, 'i');
+    return re.test(value || '');
+}

@@ -2,6 +2,10 @@ import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } fro
 import { ProcessContext } from '@vendure/core';
 import { AbandonedCartService } from './abandoned-cart.service';
 import { RecommendationsService } from './recommendations.service';
+import { CartCaptureService } from './cart-capture.service';
+import { CartRemindersService } from './cart-reminders.service';
+import { VaSettingsService } from './va-settings.service';
+import { getOptions } from './plugin';
 
 const loggerCtx = 'HuloAnalyticsScanner';
 
@@ -36,7 +40,21 @@ export class AbandonedCartScanner implements OnApplicationBootstrap, OnApplicati
         private readonly cartSvc: AbandonedCartService,
         private readonly recsSvc: RecommendationsService,
         private readonly processContext: ProcessContext,
+        private readonly capture: CartCaptureService,
+        private readonly reminders: CartRemindersService,
+        private readonly settings: VaSettingsService,
     ) {}
+
+    /** One abandonment pass: storefront snapshots, then server-side captures, then due reminder e-mails (all premium). */
+    async runCartPass(): Promise<void> {
+        await this.cartSvc.scan();
+        const windowMinutes = Number((getOptions() as any).abandonment?.windowMinutes) || 30;
+        try { await this.capture.promote(windowMinutes); } catch (e: any) { Logger.error(`Server cart capture failed: ${e?.message}`, loggerCtx); }
+        try {
+            const s = await this.settings.get();
+            await this.reminders.sendDue(s.reminders, s.verifiedEmailOnly);
+        } catch (e: any) { Logger.error(`Cart reminders failed: ${e?.message}`, loggerCtx); }
+    }
 
     onApplicationBootstrap() {
         // Only the worker process runs the sweeps. Guard here rather
@@ -55,14 +73,14 @@ export class AbandonedCartScanner implements OnApplicationBootstrap, OnApplicati
         };
         this.cartTimer = setInterval(() => {
             if (!premium()) return;
-            this.cartSvc.scan().catch((e: any) => {
+            this.runCartPass().catch((e: any) => {
                 Logger.error(`Abandoned-cart scan failed: ${e?.message}`, loggerCtx);
             });
         }, 5 * 60_000);
         // Fire once at boot so a fresh install doesn't wait 5 min for
         // its first sweep.
         if (premium()) {
-            this.cartSvc.scan().catch((e: any) => {
+            this.runCartPass().catch((e: any) => {
                 Logger.error(`Initial abandoned-cart scan failed: ${e?.message}`, loggerCtx);
             });
         }

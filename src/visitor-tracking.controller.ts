@@ -15,36 +15,14 @@ import { VisitorAnalyticsPlugin, getOptions } from './plugin';
 import { VisitorEvent } from './visitor-event.entity';
 import { VisitorTrackingService } from './visitor-tracking.service';
 import { VisitorEngagementService } from './engagement.service';
+import { VaSettingsService } from './va-settings.service';
+import { GoalsService, cleanGoal } from './goals.service';
+import { cookielessVisitorId, ipInRange } from './privacy-utils';
 
 const COOKIE_VISITOR = 'ees_vid';
 const COOKIE_SESSION = 'ees_sid';
 const VISITOR_TTL_DAYS = 730;   // ~2 years
 const SESSION_IDLE_MIN = 30;    // 30-minute idle session timeout
-
-/** Free-tier daily event cap. 100 / UTC day across the whole install
- *  — enough to evaluate, not enough to run a real store on. The
- *  counter is in-memory only (acceptable: free-tier installs aren't
- *  multi-instance anyway, and resetting on restart works in the
- *  customer's favour). */
-const FREE_TIER_DAILY_CAP = 100;
-const freeTierBudget = (() => {
-    let day = '';
-    let used = 0;
-    return {
-        consume(n: number): boolean {
-            const today = new Date().toISOString().slice(0, 10);
-            if (today !== day) { day = today; used = 0; }
-            if (used + n > FREE_TIER_DAILY_CAP) return false;
-            used += n;
-            return true;
-        },
-        snapshot(): { day: string; used: number; cap: number } {
-            const today = new Date().toISOString().slice(0, 10);
-            if (today !== day) return { day: today, used: 0, cap: FREE_TIER_DAILY_CAP };
-            return { day, used, cap: FREE_TIER_DAILY_CAP };
-        },
-    };
-})();
 
 function requireAdmin(ctx: RequestContext, res: Response, perms: Permission[] = [Permission.ReadCustomer]): boolean {
     if (!ctx?.activeUserId) {
@@ -66,6 +44,9 @@ export function drained(res: Response): Promise<void> {
         res.once('close', done);
     });
 }
+
+export { sessionRates } from './ingest-utils';
+import { sessionRates } from './ingest-utils';
 
 function clampInt(raw: any, fallback: number, min: number, max: number): number {
     const n = parseInt(String(raw ?? fallback), 10);
@@ -128,6 +109,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         private tracking: VisitorTrackingService,
         private processContext: ProcessContext,
         private engagement: VisitorEngagementService,
+        private settings: VaSettingsService,
+        private goals: GoalsService,
     ) {}
 
     onApplicationBootstrap(): void {
@@ -208,7 +191,6 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         let extras: { notice: any; premiumFeatures: string[]; recentStats: Array<{ label: string; value: string }> } =
             { notice: null, premiumFeatures: [], recentStats: [] };
         try { extras = await this.engagement.licenceExtras(); } catch { /* banner still renders */ }
-        const budget = freeTierBudget.snapshot();
         return res.json({
             licensed: !!licence?.valid,
             licence: describeLicence(licence),
@@ -219,10 +201,9 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
             update: updater ? updater.getStatus() : null,
             selfUpdate: selfUpdateEnv(),
             ...extras,
-            /** Free tier only: today's 100-event budget is spent, events are being skipped until midnight UTC. */
-            capReached: !VisitorAnalyticsPlugin.hasPremiumAccess() && budget.used >= budget.cap,
-            capUsed: budget.used,
-            cap: budget.cap,
+            premium: VisitorAnalyticsPlugin.hasPremiumAccess(),
+            /** 0.20.0: the free tier records every event; kept for older admin UIs. */
+            capReached: false,
         });
     }
 
@@ -295,7 +276,9 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         if (to && !/^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/.test(to)) {
             return res.status(400).json({ sent: false, to, reason: 'Enter a valid email address', subject: '' });
         }
-        return res.json(await this.engagement.sendTest(to));
+        const r = await this.engagement.sendTest(to);
+        if (r.reason === 'licence-required') return res.status(402).json({ ...premiumFeatureError('vendure-plugin-visitor-analytics'), message: 'The weekly report needs a licence' });
+        return res.json(r);
     }
 
     /** This week's report as HTML, for the admin's "Preview" button. */
@@ -421,17 +404,9 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
 
         if (this.rateLimited(req, res, 'track')) return;
 
-        // Tier-gate: unlicensed installs are capped at 100 events / UTC day.
-        // Once the cap is hit, /track returns 200 with `skipped: 'free-tier-cap'`
-        // so the storefront's beacon doesn't surface errors to end users.
-        if (!VisitorAnalyticsPlugin.hasPremiumAccess()) {
-            const eventsLen = Array.isArray((body || {}).events) ? body.events.length : 1;
-            if (!freeTierBudget.consume(eventsLen)) {
-                return res.json({ stored: 0, skipped: 'free-tier-cap', cap: FREE_TIER_DAILY_CAP });
-            }
-        }
-
+        // 0.20.0: no daily cap on the free tier — every event is recorded.
         const opts = getOptions();
+        const settings = await this.settings.get();
 
         // Privacy: honour Do-Not-Track when configured. We still return 200
         // so the storefront can't tell the difference between "stored" and
@@ -451,6 +426,15 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
             if (!consented) {
                 return res.json({ stored: 0, skipped: 'no-consent' });
             }
+        }
+
+        // Excluded addresses (office, staff VPN) and signed-in administrators record nothing.
+        const clientIp = realIp(req);
+        if (clientIp && settings.excludeIps.length && settings.excludeIps.some(r => ipInRange(clientIp, r))) {
+            return res.json({ stored: 0, skipped: 'excluded' });
+        }
+        if (settings.excludeStaff && ctx?.activeUserId && await this.tracking.isStaffUser(ctx.activeUserId)) {
+            return res.json({ stored: 0, skipped: 'staff' });
         }
 
         // Identity resolution, in priority order:
@@ -483,6 +467,15 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
             sessionId = this.tracking.newId();
             issuedSession = true;
         }
+        // Cookieless mode: ids the browser holds are ignored and none are issued; the visit is a
+        // daily-salted hash of address + browser + site, its session the one open in the last 30 minutes.
+        if (settings.cookieless) {
+            const salt = await this.settings.dailySalt();
+            visitorId = cookielessVisitorId(salt, clientIp || '', String(req.headers['user-agent'] || '').slice(0, 512), String(opts.publicBaseUrl || ''));
+            sessionId = await this.tracking.cookielessSession(visitorId);
+            issuedVisitor = false;
+            issuedSession = false;
+        }
 
         const channelId = clampInt(body?.channelId, 1, 1, 2147483647);
         // The customer comes from the Vendure session, never from the body: an
@@ -502,11 +495,17 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
 
         const out = await this.tracking.ingest({
             visitorId, sessionId, customerId, channelId, events,
+            strip: { defaults: settings.stripPrivateParams, extra: settings.stripParams },
+            premium: VisitorAnalyticsPlugin.hasPremiumAccess(),
             ip,
             userAgent: req.headers['user-agent'] || null,
             acceptLanguage: (req.headers['accept-language'] as string) || null,
             proxyCountry, proxyRegion,
         });
+
+        if (settings.cookieless) {
+            return res.json({ stored: out.stored, visitorId, sessionId, issuedVisitor, issuedSession, cookieless: true });
+        }
 
         // Refresh cookies on every hit so the session window slides while
         // the visitor is active.
@@ -615,16 +614,30 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
                     COUNT(DISTINCT \`visitorId\`) AS visitors,
                     COUNT(DISTINCT \`sessionId\`) AS sessions,
                     SUM(reached_product) AS \`productViewers\`,
-                    SUM(reached_checkout) AS \`checkoutReached\`
+                    SUM(reached_checkout) AS \`checkoutReached\`,
+                    SUM(CASE WHEN pv <= 1 THEN 1 ELSE 0 END) AS bounced,
+                    SUM(converted) AS conversions
              FROM (
                  SELECT \`visitorId\`, \`sessionId\`,
                         COALESCE(\`utmSource\`, \`referrerDomain\`, '(direct)') AS source,
                         COALESCE(\`utmMedium\`, IF(\`referrerDomain\` IS NOT NULL, 'referral', 'none')) AS medium,
                         \`utmCampaign\` AS campaign,
                         MAX(CASE WHEN url LIKE '/products/%' AND type='pageview' THEN 1 ELSE 0 END) AS reached_product,
-                        MAX(CASE WHEN (url LIKE '%/checkout%' OR url LIKE '%cart%') AND type='pageview' THEN 1 ELSE 0 END) AS reached_checkout
+                        MAX(CASE WHEN (url LIKE '%/checkout%' OR url LIKE '%cart%') AND type='pageview' THEN 1 ELSE 0 END) AS reached_checkout,
+                        MAX(ss.pv) AS pv,
+                        MAX(ss.converted) AS converted
                  FROM visitor_event
-                 WHERE \`createdAt\` >= DATE_SUB(NOW(), INTERVAL ? DAY) ${w.sql}
+                 -- Bounce and conversion are properties of the whole session (its checkout
+                 -- event carries no UTM of its own), joined onto each source the session had.
+                 JOIN (
+                     SELECT \`sessionId\` AS sid,
+                            SUM(CASE WHEN type='pageview' THEN 1 ELSE 0 END) AS pv,
+                            MAX(CASE WHEN \`goalId\` IS NOT NULL OR (type='event' AND meta LIKE '%"eventType":"checkout_completed"%') THEN 1 ELSE 0 END) AS converted
+                     FROM visitor_event
+                     WHERE \`createdAt\` >= DATE_SUB(NOW(), INTERVAL ? DAY) ${w.sql}
+                     GROUP BY \`sessionId\`
+                 ) ss ON ss.sid = \`sessionId\`
+                 WHERE \`createdAt\` >= DATE_SUB(NOW(), INTERVAL ? DAY) ${w.sql} AND type = 'pageview'
                    GROUP BY \`visitorId\`, \`sessionId\`,
                           COALESCE(\`utmSource\`, \`referrerDomain\`, '(direct)'),
                           COALESCE(\`utmMedium\`, IF(\`referrerDomain\` IS NOT NULL, 'referral', 'none')),
@@ -633,7 +646,7 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
              GROUP BY source, medium
              ORDER BY visitors DESC
              LIMIT ? OFFSET ?`,
-            [days, ...w.params, take, skip],
+            [days, ...w.params, days, ...w.params, take, skip],
         );
         const [{ total }] = await adapterFor(this.connection.rawConnection).query(
             `SELECT COUNT(*) AS total FROM (
@@ -654,6 +667,7 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
                 sessions: Number(r.sessions) || 0,
                 productViewers: Number(r.productViewers) || 0,
                 checkoutReached: Number(r.checkoutReached) || 0,
+                ...sessionRates(Number(r.sessions) || 0, Number(r.bounced) || 0, Number(r.conversions) || 0),
             })),
             total: Number(total) || 0, take, skip,
         });
@@ -869,8 +883,8 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
              LIMIT 8`,
             [days, ...w.params],
         );
-        const [countries, devices, browsers] = await Promise.all([
-            grouped('country'), grouped('device'), grouped('browser'),
+        const [countries, devices, browsers, oses] = await Promise.all([
+            grouped('country'), grouped('device'), grouped('browser'), grouped('os'),
         ]);
         const shape = (rows: any[]) => rows.map(r => ({
             label: String(r.label), visitors: Number(r.visitors) || 0,
@@ -880,6 +894,53 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
             countries: shape(countries),
             devices: shape(devices),
             browsers: shape(browsers),
+            oses: shape(oses),
+        });
+    }
+
+    /**
+     * Landing pages (0.20.0, free): the first page of each session, with the
+     * sessions it started, how many of those bounced (one page view) and how
+     * many converted (a goal, or a `checkout_completed` event).
+     */
+    @Get('visitors/landing-pages')
+    async landingPages(@Ctx() ctx: RequestContext, @Req() req: Request, @Res() res: Response) {
+        if (!requireAdmin(ctx, res)) return;
+        const days = clampInt((req.query as any).days, 30, 1, 365);
+        const take = clampInt((req.query as any).take, 25, 1, 500);
+        const skip = clampInt((req.query as any).skip, 0, 0, 1_000_000);
+        const channelId = this.scopedChannel(ctx, req, res);
+        if (channelId === undefined) return;
+        const w = channelWhere(channelId);
+        const db = adapterFor(this.connection.rawConnection);
+        const rows = await db.query(
+            `SELECT e.url AS url, COUNT(*) AS sessions,
+                    COUNT(DISTINCT s.\`visitorId\`) AS visitors,
+                    SUM(CASE WHEN s.pv <= 1 THEN 1 ELSE 0 END) AS bounced,
+                    SUM(s.converted) AS conversions
+             FROM (
+                 SELECT \`sessionId\`, MAX(\`visitorId\`) AS \`visitorId\`,
+                        MIN(CASE WHEN type='pageview' THEN id END) AS \`entryId\`,
+                        SUM(CASE WHEN type='pageview' THEN 1 ELSE 0 END) AS pv,
+                        MAX(CASE WHEN \`goalId\` IS NOT NULL OR (type='event' AND meta LIKE '%"eventType":"checkout_completed"%') THEN 1 ELSE 0 END) AS converted
+                 FROM visitor_event
+                 WHERE \`createdAt\` >= DATE_SUB(NOW(), INTERVAL ? DAY) ${w.sql} AND \`isBot\` = FALSE
+                 GROUP BY \`sessionId\`
+             ) s
+             JOIN visitor_event e ON e.id = s.\`entryId\`
+             GROUP BY e.url
+             ORDER BY sessions DESC
+             LIMIT ? OFFSET ?`,
+            [days, ...w.params, take, skip],
+        );
+        return res.json({
+            days, channelId, take, skip,
+            pages: rows.map((r: any) => ({
+                url: r.url,
+                sessions: Number(r.sessions) || 0,
+                visitors: Number(r.visitors) || 0,
+                ...sessionRates(Number(r.sessions) || 0, Number(r.bounced) || 0, Number(r.conversions) || 0),
+            })),
         });
     }
 
@@ -1225,30 +1286,25 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         return res.json({ goals: rows });
     }
 
-    /** Admin: create a goal. */
+    /** Admin: create a goal (premium). `type`: page (default), form or payment — see `cleanGoal`. */
     @Post('goals')
-    async createGoal(@Ctx() ctx: RequestContext, @Body() body: any, @Res() res: Response) {
+    async createGoal(@Ctx() ctx: RequestContext, @Body() body: any, @Req() req: Request, @Res() res: Response) {
         if (!requireAdmin(ctx, res, [Permission.UpdateSettings])) return;
         if (!VisitorAnalyticsPlugin.hasPremiumAccess()) {
             return res.status(402).json(premiumFeatureError('vendure-plugin-visitor-analytics'));
         }
+        const requested = Number(body?.channelId) || null;
+        const scope = scopeChannel(ctx as any, requested);
+        if (!scope.ok) return res.status(403).json({ error: 'Insufficient permissions for that channel' });
+        const goal = cleanGoal(body || {});
+        if ('error' in goal) return res.status(400).json({ error: goal.error });
         const repo = this.connection.rawConnection.getRepository(ConversionGoal);
-        const row = repo.create({
-            channelId: Number(body?.channelId) || 1,
-            name: String(body?.name || '').slice(0, 128).trim(),
-            urlPattern: String(body?.urlPattern || '').slice(0, 256).trim(),
-            valueMinor: Math.max(0, parseInt(body?.valueMinor, 10) || 0),
-            enabled: body?.enabled !== false,
-        });
-        if (!row.name || !row.urlPattern) {
-            return res.status(400).json({ error: 'name and urlPattern required' });
-        }
-        const saved = await repo.save(row);
+        const saved = await repo.save(repo.create({ channelId: scope.channelId ?? requested ?? 1, ...goal }));
         this.tracking.invalidateGoalCache();
         return res.json({ goal: saved });
     }
 
-    /** Admin: update a goal. */
+    /** Admin: update a goal (premium for form and payment goals). */
     @Put('goals/:id')
     async updateGoal(@Ctx() ctx: RequestContext, @Param('id') idParam: string, @Body() body: any, @Res() res: Response) {
         if (!requireAdmin(ctx, res, [Permission.UpdateSettings])) return;
@@ -1257,10 +1313,11 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         const repo = this.connection.rawConnection.getRepository(ConversionGoal);
         const row = await repo.findOne({ where: { id } });
         if (!row) return res.status(404).json({ error: 'Not found' });
-        if (typeof body?.name === 'string') row.name = body.name.slice(0, 128);
-        if (typeof body?.urlPattern === 'string') row.urlPattern = body.urlPattern.slice(0, 256);
-        if (typeof body?.valueMinor === 'number') row.valueMinor = Math.max(0, Math.trunc(body.valueMinor));
-        if (typeof body?.enabled === 'boolean') row.enabled = body.enabled;
+        if (!scopeChannel(ctx as any, Number(row.channelId)).ok) return res.status(403).json({ error: 'Insufficient permissions for that channel' });
+        const goal = cleanGoal(body || {}, { name: row.name, type: (row.type || 'page') as any, urlPattern: row.urlPattern, target: row.target || '', valueMinor: row.valueMinor, enabled: row.enabled });
+        if ('error' in goal) return res.status(400).json({ error: goal.error });
+        if (goal.type !== 'page' && !VisitorAnalyticsPlugin.hasPremiumAccess()) return res.status(402).json(premiumFeatureError('vendure-plugin-visitor-analytics'));
+        Object.assign(row, goal);
         const saved = await repo.save(row);
         this.tracking.invalidateGoalCache();
         return res.json({ goal: saved });
@@ -1273,12 +1330,14 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         const id = Number.parseInt(idParam, 10);
         if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
         const repo = this.connection.rawConnection.getRepository(ConversionGoal);
+        const row = await repo.findOne({ where: { id } });
+        if (row && !scopeChannel(ctx as any, Number(row.channelId)).ok) return res.status(403).json({ error: 'Insufficient permissions for that channel' });
         const result = await repo.delete({ id });
         this.tracking.invalidateGoalCache();
         return res.json({ ok: !!(result.affected && result.affected > 0) });
     }
 
-    /** Admin: per-goal stats over the last N days (default 30). */
+    /** Admin: per-goal completions, unique visitors and value over the last N days (default 30). */
     @Get('goals/stats')
     async goalsStats(@Ctx() ctx: RequestContext, @Req() req: Request, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
@@ -1286,23 +1345,17 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
         const scopedGoalChannel = this.scopedChannel(ctx, req, res);
         if (scopedGoalChannel === undefined) return;
         const channelId = scopedGoalChannel ?? 1;
-        const rows = await adapterFor(this.connection.rawConnection).query(
-            `SELECT g.id, g.name, g.\`urlPattern\`, g.\`valueMinor\`, g.enabled,
-                    COUNT(DISTINCT v.\`visitorId\`) AS \`uniqueVisitors\`,
-                    COUNT(v.id) AS completions
-             FROM conversion_goal g
-             LEFT JOIN visitor_event v
-                ON v.\`goalId\` = g.id
-               AND v.\`createdAt\` >= DATE_SUB(NOW(), INTERVAL ? DAY)
-               AND v.\`isBot\` = FALSE
-             WHERE g.\`channelId\` = ?
-             GROUP BY g.id`,
-            [days, channelId],
-        );
-        return res.json({ days, channelId, goals: rows.map((r: any) => ({
-            ...r,
-            valueMinor: Number(r.valueMinor) * Number(r.completions || 0),
-        })) });
+        return res.json({ days, channelId, premium: VisitorAnalyticsPlugin.hasPremiumAccess(), goals: await this.goals.stats(channelId, days) });
+    }
+
+    /** Admin: ready-made goals from recent traffic (premium). */
+    @Get('goals/suggestions')
+    async goalSuggestions(@Ctx() ctx: RequestContext, @Req() req: Request, @Res() res: Response) {
+        if (!requireAdmin(ctx, res)) return;
+        if (!VisitorAnalyticsPlugin.hasPremiumAccess()) return res.status(402).json(premiumFeatureError('vendure-plugin-visitor-analytics'));
+        const scoped = this.scopedChannel(ctx, req, res);
+        if (scoped === undefined) return;
+        return res.json({ suggestions: await this.goals.suggestions(scoped ?? 1) });
     }
 
     /** Admin: CSV export of recent visitor events with all enrichment. */

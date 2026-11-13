@@ -33,8 +33,9 @@ describe('engagement stats', () => {
     });
 
     it('premium features list is the published one', () => {
-        expect(PREMIUM_FEATURES).toHaveLength(4);
-        expect(PREMIUM_FEATURES[0]).toMatch(/100\/day/);
+        expect(PREMIUM_FEATURES).toHaveLength(5);
+        expect(PREMIUM_FEATURES.join(' ')).not.toMatch(/100\/day|Unlimited events/);
+        expect(PREMIUM_FEATURES.join(' ')).toMatch(/Weekly report and set-up checklist/);
     });
 });
 

@@ -147,10 +147,19 @@ interface VisitorProfile {
                 </div>
             </div>
             <div class="lic-notice" *ngIf="licMeta?.notice?.message">{{ licMeta.notice.message }}</div>
-            <div class="lic-notice" *ngIf="licMeta?.capReached">Free-tier cap reached today — the 100 events/day budget is spent, so new events are skipped until midnight UTC. Start the free trial or activate a key above to lift the cap.</div>
+
         </vdr-page-block>
 
-        <!-- ── Weekly report (Monday 08:00) — sits next to the licence card because this page has no Settings tab. -->
+        <!-- ── Tabs (0.20.0): Overview is the dashboard below; the other tabs live in VisitorsToolsComponent. -->
+        <vdr-page-block>
+            <div class="va-tabs" role="tablist">
+                <button *ngFor="let t of tabs" class="va-tab" role="tab" [class.active]="tab === t.key" [attr.aria-selected]="tab === t.key" (click)="tab = t.key">{{ t.label }}</button>
+            </div>
+        </vdr-page-block>
+        <hulo-va-tools *ngIf="tab !== 'overview'" [tab]="tab" [days]="days" [channelId]="channelId" [premium]="!!licMeta?.premium"></hulo-va-tools>
+        <ng-container *ngIf="tab === 'overview'">
+
+        <!-- ── Weekly report (Monday 08:00, licensed). -->
         <vdr-page-block *ngIf="digest">
             <div class="card">
                 <div class="card-block">
@@ -158,12 +167,13 @@ interface VisitorProfile {
                         <h3 class="card-title">📬 Weekly report</h3>
                         <span class="muted">Every Monday at 08:00 (server time): visitors, page views, carts recovered and what to set up next.</span>
                     </div>
+                    <p class="muted" *ngIf="digest.premium === false">The weekly report needs a licence (or the evaluation). Your settings are kept; nothing is sent until a licence is active.</p>
                     <div class="digest-row">
                         <label class="digest-toggle"><input type="checkbox" [checked]="digest.enabled" (change)="saveDigest({ enabled: !digest.enabled })" [disabled]="digestSaving"> Enabled</label>
                         <input class="lic-key" type="email" [(ngModel)]="digestRecipient" [placeholder]="digest.defaultRecipient ? 'Defaults to ' + digest.defaultRecipient : 'Recipient email (no default yet)'" [disabled]="digestSaving">
                         <button class="gbtn gbtn-outline gbtn-sm" (click)="saveDigest({ recipient: digestRecipient })" [disabled]="digestSaving || digestRecipient === (digest.recipient || '')">Save</button>
                         <span class="muted digest-when">Last sent {{ digest.lastSentAt ? (digest.lastSentAt | date:'d MMM y') : 'never' }} · next {{ digest.nextDueAt ? (digest.nextDueAt | date:'d MMM y, HH:mm') : 'off' }}</span>
-                        <button class="gbtn gbtn-primary gbtn-sm" (click)="sendDigestTest()" [disabled]="digestTesting">{{ digestTesting ? 'Sending…' : 'Send me a test' }}</button>
+                        <button class="gbtn gbtn-primary gbtn-sm" (click)="sendDigestTest()" [disabled]="digestTesting || digest.premium === false">{{ digestTesting ? 'Sending…' : 'Send me a test' }}</button>
                         <button class="gbtn gbtn-outline gbtn-sm" (click)="previewDigest()">Preview</button>
                     </div>
                 </div>
@@ -709,6 +719,7 @@ interface VisitorProfile {
                 </div>
             </div>
         </div>
+        </ng-container>
     `,
     styles: [`
         .lic-banner { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:12px 16px; border-radius:10px; font-size:13px; background:var(--gb-tint-warn, #fef3c7); border:1px solid var(--gb-line-warn, #fcd34d); }
@@ -723,6 +734,9 @@ interface VisitorProfile {
         .unlock-chip { display:inline-block; padding:2px 8px; border-radius:999px; background:#fef3c7; border:1px solid #fcd34d; color:#92400e; font-size:11px; font-weight:600; }
         .kpi-of { font-size:16px; font-weight:600; color:var(--color-component-color-300, #64748b); }
 
+        .va-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--color-weight-200, #e5e7eb); flex-wrap: wrap; }
+        .va-tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px; font: inherit; font-weight: 600; color: var(--color-weight-600, #6b7280); cursor: pointer; }
+        .va-tab.active { color: var(--color-text-100, #111827); border-bottom-color: #f59e0b; }
         /* ── Weekly report card ─────────────────────────────────── */
         .digest-head { display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; margin-bottom:10px; }
         .digest-head .card-title { margin:0; }
@@ -1063,6 +1077,11 @@ export class VisitorsComponent implements OnInit, OnDestroy {
     private restartTimer: any = null;
     loading = false;
     days = 30;
+    tab: 'overview' | 'reports' | 'goals' | 'carts' | 'settings' = 'overview';
+    readonly tabs: Array<{ key: 'overview' | 'reports' | 'goals' | 'carts' | 'settings'; label: string }> = [
+        { key: 'overview', label: 'Overview' }, { key: 'reports', label: 'Reports' }, { key: 'goals', label: 'Goals' },
+        { key: 'carts', label: 'Abandoned carts' }, { key: 'settings', label: 'Settings' },
+    ];
 
     /** Channel filter — null = All channels (aggregate). Populated by
      *  `loadChannels()` on init. Every API call carries `channelId`
@@ -1398,7 +1417,7 @@ export class VisitorsComponent implements OnInit, OnDestroy {
     /** Hidden when complete, or when dismissed — unless an item that was
      *  done at dismissal time has since come undone. */
     setupVisible(): boolean {
-        if (!this.setup || this.setup.complete) return false;
+        if (!this.setup || this.setup.complete || (this.setup as any).premium === false) return false;
         let hidden = '';
         let doneThen: string[] = [];
         try {

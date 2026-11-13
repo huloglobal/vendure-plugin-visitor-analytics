@@ -67,7 +67,7 @@ const cartRow = {
 };
 
 const visitorsController = () =>
-    new VisitorTrackingController({ rawConnection: rawConnection([visitorRow]) } as any, {} as any, {} as any, {} as any);
+    new VisitorTrackingController({ rawConnection: rawConnection([visitorRow]) } as any, {} as any, {} as any, {} as any, {} as any, {} as any);
 const cartsController = () =>
     new AbandonedCartController({ connection: { rawConnection: rawConnection([cartRow]) } } as any);
 

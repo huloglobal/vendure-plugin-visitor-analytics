@@ -30,3 +30,10 @@ export {
 export { RecommendationsService, RecommendedProduct } from './recommendations.service';
 export { SearchAnalyticsService } from './search-analytics.service';
 export { JourneyBuffsService } from './journey-buffs.service';
+export { VaSettingsService } from './va-settings.service';
+export { VaSettings, ReminderSettings, DEFAULT_VA_SETTINGS, sanitiseSettings } from './va-settings';
+export { GoalsService, cleanGoal, GOAL_TYPES, GoalType } from './goals.service';
+export { CartCaptureService } from './cart-capture.service';
+export { CartRemindersService } from './cart-reminders.service';
+export { VaPrivacyService, PrivacySubject } from './privacy.service';
+export { PRIVATE_PARAMS, stripPrivateParams, cookielessVisitorId } from './privacy-utils';
