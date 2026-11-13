@@ -6,7 +6,7 @@ import {
     RateLimiter,
     signValue,
     startRetentionSweeper,
-    verifySignedValue, LicenceStore, performSelfUpdate, selfUpdateEnv, adapterFor, PurchaseClaimClient, evalInstanceId, describeLicence } from '@huloglobal/vendure-licence-sdk';
+    verifySignedValue, LicenceStore, performSelfUpdate, selfUpdateEnv, adapterFor, PurchaseClaimClient, evalInstanceId, describeLicence, isAdminApiSession } from '@huloglobal/vendure-licence-sdk';
 import { Ctx, Permission, ProcessContext, RequestContext, TransactionalConnection } from '@vendure/core';
 import { Request, Response } from 'express';
 import { ConversionGoal } from './conversion-goal.entity';
@@ -51,7 +51,7 @@ function requireAdmin(ctx: RequestContext, res: Response, perms: Permission[] = 
         res.status(401).json({ error: 'Authentication required' });
         return false;
     }
-    if (!ctx.userHasPermissions(perms)) {
+    if (!isAdminApiSession(ctx) || !ctx.userHasPermissions(perms)) {
         res.status(403).json({ error: 'Insufficient permissions' });
         return false;
     }

@@ -1,5 +1,6 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { Ctx, RequestContext, Allow, Permission, ForbiddenError } from '@vendure/core';
+import { assertAdminApiSession } from './admin-session';
 import { scopeChannel, singleChannel } from './channel-scope';
 import { JourneyBuffsService } from './journey-buffs.service';
 
@@ -27,6 +28,7 @@ export class JourneyBuffsController {
         @Query('channelId') ch?: string,
         @Query('limit') l?: string,
     ) {
+        assertAdminApiSession(ctx);
         const items = await this.service.rageClickHotSpots(
             clampQ(d, 7, 1, 365), channelOrThrow(ctx, ch), clampQ(l, 20, 1, 200),
         );
@@ -42,6 +44,7 @@ export class JourneyBuffsController {
         @Query('channelId') ch?: string,
         @Query('limit') l?: string,
     ) {
+        assertAdminApiSession(ctx);
         const items = await this.service.deadClickHotSpots(
             clampQ(d, 7, 1, 365), channelOrThrow(ctx, ch), clampQ(l, 20, 1, 200),
         );
@@ -56,6 +59,7 @@ export class JourneyBuffsController {
         @Query('visitorId') v?: string,
         @Query('limit') l?: string,
     ) {
+        assertAdminApiSession(ctx);
         const visitorId = String(v || '').trim();
         if (!visitorId) return { error: 'visitorId-required' };
         const scope = scopeChannel(ctx as any, null);

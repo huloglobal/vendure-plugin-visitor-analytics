@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Query, Param, Req, Res, Body, OnApplicationBootstrap } from '@nestjs/common';
 import { Ctx, RequestContext, Allow, Permission, ForbiddenError } from '@vendure/core';
+import { assertAdminApiSession } from './admin-session';
 import { Request, Response } from 'express';
 import { RateLimiter, adapterFor } from '@huloglobal/vendure-licence-sdk';
 import { AbandonedCartService } from './abandoned-cart.service';
@@ -89,6 +90,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
         @Query('email') email?: string,
         @Query('channelId') channelRaw?: string,
     ) {
+        assertAdminApiSession(ctx);
         const channelId = this.listChannel(ctx, channelRaw);
         const take = Math.min(Math.max(1, parseInt(takeRaw || '25', 10) || 25), 200);
         const skip = Math.max(0, parseInt(skipRaw || '0', 10) || 0);
@@ -170,6 +172,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
     @Get('abandoned-carts/summary')
     @Allow(Permission.ReadCustomer)
     async summary(@Ctx() ctx: RequestContext, @Query('days') daysRaw?: string, @Query('channelId') channelRaw?: string) {
+        assertAdminApiSession(ctx);
         const channelId = this.listChannel(ctx, channelRaw);
         const w = channelId == null ? { sql: '', params: [] as any[] } : { sql: 'AND `channelId` = ?', params: [channelId] };
         const days = Math.min(Math.max(1, parseInt(daysRaw || '30', 10) || 30), 365);
@@ -214,6 +217,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
     @Allow(Permission.ReadCustomer)
     async exportCsv(@Ctx() ctx: RequestContext, @Res() res: Response, @Query('days') daysRaw?: string, @Query('channelId') channelRaw?: string) {
         noStore(res);
+        assertAdminApiSession(ctx);
         const channelId = this.listChannel(ctx, channelRaw);
         const w = channelId == null ? { sql: '', params: [] as any[] } : { sql: 'AND `channelId` = ?', params: [channelId] };
         const days = Math.min(Math.max(1, parseInt(daysRaw || '30', 10) || 30), 365);
@@ -312,6 +316,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
     @Get('abandoned-carts/opt-outs')
     @Allow(Permission.ReadCustomer)
     async listOptOuts(@Ctx() ctx: RequestContext, @Query('take') takeRaw?: string, @Query('skip') skipRaw?: string) {
+        assertAdminApiSession(ctx);
         const take = Math.min(Math.max(1, parseInt(takeRaw || '50', 10) || 50), 500);
         const skip = Math.max(0, parseInt(skipRaw || '0', 10) || 0);
         const { items, total } = await this.service.listOptOuts(take, skip);
@@ -321,6 +326,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
     @Post('abandoned-carts/opt-outs/remove')
     @Allow(Permission.UpdateCustomer)
     async removeOptOut(@Ctx() ctx: RequestContext, @Body() body: { email?: string }) {
+        assertAdminApiSession(ctx);
         const ok = await this.service.optIn(String(body?.email || ''));
         return ok ? { ok: true } : { error: 'not-found' };
     }
@@ -328,6 +334,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
     @Get('abandoned-carts/:id')
     @Allow(Permission.ReadCustomer)
     async detail(@Ctx() ctx: RequestContext, @Param('id') idRaw: string) {
+        assertAdminApiSession(ctx);
         const id = parseInt(idRaw, 10);
         if (!(await this.cartInScope(ctx, id, Permission.ReadCustomer))) return { error: 'not-found' };
         const conn = adapterFor((this.service as any).connection.rawConnection);
@@ -440,6 +447,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
         @Param('id') idRaw: string,
         @Body() body?: { resumeOrderCode?: string | null },
     ) {
+        assertAdminApiSession(ctx);
         const id = parseInt(idRaw, 10);
         if (!(await this.cartInScope(ctx, id, Permission.UpdateCustomer))) {
             return { error: 'recovery-disabled-or-not-found', hint: 'Set abandonment.recoveryLinkSecret in plugin options' };
@@ -459,6 +467,7 @@ export class AbandonedCartController implements OnApplicationBootstrap {
         @Param('id') idRaw: string,
         @Body() body: { status?: string },
     ) {
+        assertAdminApiSession(ctx);
         const id = parseInt(idRaw, 10);
         if (!(await this.cartInScope(ctx, id, Permission.UpdateCustomer))) return { error: 'not-found' };
         const status = String(body?.status || '') as any;

@@ -50,7 +50,7 @@ function adminCtx(channels: Array<{ id: number; code: string }> = [{ id: 1, code
         activeUserId,
         channelId: channels[0].id,
         userHasPermissions: () => true,
-        session: { user: { channelPermissions: channels.map(c => ({ ...c, permissions: ['ReadCustomer'] })) } },
+        session: { apiType: 'admin', user: { channelPermissions: channels.map(c => ({ ...c, permissions: ['ReadCustomer'] })) } },
     };
 }
 
@@ -111,6 +111,15 @@ describe('GET /ees/abandoned-carts/export.csv', () => {
     it('sends it when the admin asks for a channel they cannot read', async () => {
         const { res, headers } = fakeRes();
         await expect(cartsController().exportCsv(adminCtx([{ id: 2, code: 'second' }]), res, '30', '1')).rejects.toThrow();
+        expect(res.body).toBe('');
+        expect(headers['cache-control']).toBe('private, no-store');
+    });
+
+    it('refuses an administrator\'s Shop-API session (Vendure 3.8+), still with no-store', async () => {
+        const { res, headers } = fakeRes();
+        const ctx = adminCtx();
+        ctx.session.apiType = 'shop';
+        await expect(cartsController().exportCsv(ctx, res, '30', undefined)).rejects.toThrow();
         expect(res.body).toBe('');
         expect(headers['cache-control']).toBe('private, no-store');
     });

@@ -1,5 +1,6 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { Ctx, RequestContext, Allow, Permission } from '@vendure/core';
+import { assertAdminApiSession } from './admin-session';
 import { RecommendationsService } from './recommendations.service';
 
 /**
@@ -88,6 +89,7 @@ export class RecommendationsController {
     @Get('recommendations/aggregate-now')
     @Allow(Permission.SuperAdmin)
     async aggregateNow(@Ctx() ctx: RequestContext, @Query('hours') hRaw?: string, @Query('force') force?: string) {
+        assertAdminApiSession(ctx);
         const hours = Math.min(Math.max(1, parseInt(hRaw || '24', 10) || 24), 24 * 30);
         const result = await this.service.aggregateCoViews(hours, { force: force === '1' || force === 'true' });
         return { ok: true, hours, ...result };

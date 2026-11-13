@@ -1,5 +1,6 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { Ctx, RequestContext, Allow, Permission, ForbiddenError } from '@vendure/core';
+import { assertAdminApiSession } from './admin-session';
 import { singleChannel } from './channel-scope';
 import { SearchAnalyticsService } from './search-analytics.service';
 
@@ -20,6 +21,7 @@ export class SearchAnalyticsController {
         @Query('channelId') chRaw?: string,
         @Query('limit') lRaw?: string,
     ) {
+        assertAdminApiSession(ctx);
         const days = Math.min(Math.max(1, parseInt(dRaw || '7', 10) || 7), 365);
         const channelId = singleChannel(ctx as any, chRaw);
         if (channelId == null) throw new ForbiddenError();
@@ -36,6 +38,7 @@ export class SearchAnalyticsController {
         @Query('channelId') chRaw?: string,
         @Query('limit') lRaw?: string,
     ) {
+        assertAdminApiSession(ctx);
         const days = Math.min(Math.max(1, parseInt(dRaw || '7', 10) || 7), 365);
         const channelId = singleChannel(ctx as any, chRaw);
         if (channelId == null) throw new ForbiddenError();
@@ -51,6 +54,7 @@ export class SearchAnalyticsController {
         @Query('days') dRaw?: string,
         @Query('channelId') chRaw?: string,
     ) {
+        assertAdminApiSession(ctx);
         const days = Math.min(Math.max(1, parseInt(dRaw || '7', 10) || 7), 365);
         const channelId = singleChannel(ctx as any, chRaw);
         if (channelId == null) throw new ForbiddenError();
