@@ -5,6 +5,63 @@ documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] — 2026-11-13
+
+Parity with HULO Visitor Analytics for WordPress.
+
+### Changed (tiers)
+- **No daily cap on the free tier.** Unlicensed installs used to stop recording after 100 events a UTC day;
+  every event is now recorded. `GET /ees/licence/status` keeps `capReached` (always `false`).
+- **The weekly report and the set-up checklist are licensed** (licence or evaluation). On the free tier the
+  scheduler sends nothing, *Send me a test* answers 402 and `GET /ees/setup` returns no items. Settings are
+  kept; the report resumes when a licence is active.
+- `PREMIUM_FEATURES` lists what a licence adds now (no event cap; adds reminders, cart capture, goal types,
+  weekly report and checklist).
+
+### Added — free
+- **Cookieless mode** (Visitors → Settings, off by default): no cookies or device storage; a daily-salted
+  HMAC of address + browser + site identifies a visit, the salt is replaced (and the old one deleted) every
+  UTC day. hulo.js stops using localStorage and sends no credentials in this mode.
+- **Exclude staff** (on by default): signed-in administrators record nothing. **Excluded addresses** (IPs and
+  CIDR ranges, v4 and v6). `?hulo_exclude=1` excludes one browser in hulo.js.
+- **Private URL parameter stripping** (on by default): tokens, keys, passwords, e-mail addresses and mailing
+  subscriber ids are removed from stored URLs and referrers; extra names configurable.
+- **Reports**: `GET /ees/visitors/landing-pages` (entry pages with sessions, bounce rate, conversions);
+  sources now carry `bounced`, `bounceRate`, `conversions`, `conversionRate` (a conversion is a goal
+  completion or a `checkout_completed` event in the session); `breakdown` adds `oses`.
+- **Personal-data export and erase**: `GET /ees/privacy/export`, `POST /ees/privacy/erase`, and a Personal
+  data card in Settings.
+- **Admin UI tabs**: Reports (sources, landing and exit pages, events, audience, site search, rage and dead
+  clicks — reports that were REST-only), Goals, Abandoned carts and Settings.
+
+### Added — licensed
+- **Goal types**: form goals (matched on `form_submit` events; hulo.js auto-tracks form submissions by form
+  id / name, never field values) and payment goals (Vendure `PaymentStateTransitionEvent` → Settled, once per
+  payment, worth what was paid when the goal has no fixed value). Per-goal completions UI. `GET
+  /ees/goals/suggestions`.
+- **Verified e-mail capture**: carts record whether their address is verified (`emailVerified`,
+  `emailSource`).
+- **Server-side cart capture** from Vendure order events (off by default).
+- **Abandoned-cart reminder e-mails** (off by default): verified addresses only, opt-outs honoured,
+  at most two per cart (compare-and-set), one sequence per address per week, per-run cap, unsubscribe link and
+  one-click List-Unsubscribe headers.
+
+### Fixed
+- hulo.js sends `meta` JSON-encoded; it was stored encoded twice, so the abandonment scanner never saw
+  hulo.js cart snapshots or checkouts. String meta is now parsed and stored once.
+- Traffic sources are grouped by page views (an event without UTM no longer opens a `(direct)` row for a
+  session that came from a campaign).
+- Goal create/update/delete check the admin's channel.
+
+### Docs
+- README: tiers table (no "403 on free"; licensed endpoints answer 402), Settings, goal types, cart
+  reminders; the Settings tab now exists.
+
+### Upgrade notes
+- Columns added on boot (and by TypeORM synchronise): `conversion_goal.type` (default `page`) and `target`;
+  `abandoned_cart.emailVerified`, `emailSource`, `emailsSent`, `lastEmailAt`. New tables `va_goal_payment`,
+  `va_order_cart`. Settings live in `hulo_plugin_prefs`. No existing data changes.
+
 ## [0.19.6] — 2026-11-13
 
 ### Security

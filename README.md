@@ -17,11 +17,33 @@ queries, search-to-cart conversion) and **journey-drawer buffs**
 (rage-click + dead-click hot-spot lists, per-session `intent`
 labels).
 
+Since 0.20.0: **cookieless mode**, staff and IP exclusion, private URL
+parameter stripping, landing-page, bounce-rate, conversion-per-source and
+OS reports, personal-data export/erase, **form and payment goals** with
+form auto-tracking and goal suggestions, **verified e-mail capture**,
+**server-side cart capture** from Vendure order events and **abandoned-cart
+reminder e-mails** — with Reports, Goals, Abandoned carts and Settings tabs
+in the admin.
+
 Maintained by Wayne Garrison.
+
+## Tiers
+
+| Free | Licensed (or the 14-day evaluation) |
+| --- | --- |
+| Every event recorded — no daily cap | Live visitors view |
+| Dashboard, funnel, journeys, visitor profiles | Abandoned-cart detection, recovery links, Slack alerts |
+| Reports: sources (bounce rate, conversions), landing pages, exit pages, events, countries / devices / browsers / OS, site search, rage and dead clicks | Abandoned-cart reminder e-mails, verified e-mail capture, server-side cart capture |
+| Cookieless mode, staff and IP exclusion, URL parameter stripping, DNT, IP anonymisation, consent gate | Conversion goals (page, form, payment) and goal suggestions; existing page goals keep counting on the free tier |
+| Personal-data export and erase | CSV export |
+| | Weekly report and set-up checklist |
+
+Licensed endpoints answer `402` with a buy link on the free tier; nothing
+answers 403 for lack of a licence.
 
 ## Buy
 
-14-day free trial (card required, start it from the admin — nothing charged until day 15), then **£9.95/month**, or **£199 one-off lifetime** at
+14-day evaluation (no card needed, start it from the admin), then **£9.95/month**, or **£199 one-off lifetime** at
 [elite.charity/licence/buy/vendure-plugin-visitor-analytics](https://elite.charity/licence/buy/vendure-plugin-visitor-analytics).
 Start the trial (or buy) from the plugin's admin page — checkout opens in a new tab and the key installs itself.
 
@@ -229,17 +251,28 @@ Per event:
 - **Bot flag** — known crawler / monitoring / library UAs (Googlebot,
   Bingbot, UptimeRobot, Datadog, curl, Puppeteer, …) marked `isBot=true`.
 
-### Configurable conversion goals
+### Configurable conversion goals (licensed)
 
-A goal is a URL glob that, when matched, counts the visitor as having
-converted. Supports `*` (within segment) and `**` (across segments).
+**Visitors → Goals** lists every goal with its completions, unique
+visitors and value over the selected range, and adds, pauses or deletes
+goals. Three types (0.20.0):
 
-```bash
-curl -X POST https://shop.example.com/ees/goals -H 'content-type: application/json' \
-  -d '{"channelId":1,"name":"Checkout completed","urlPattern":"/checkout/thank-you/*","valueMinor":5000}'
-```
+- **page** — a page view whose URL matches `urlPattern` (`*` within a
+  segment, `**` across segments), e.g. `/checkout/confirmation/**`;
+- **form** — a `form_submit` event whose form id or name matches `target`
+  (`*` = anything), optionally only on pages matching `urlPattern`.
+  hulo.js reports form submissions automatically (the form's id, name or
+  action path, never a field value; off in Settings);
+- **payment** — a Vendure payment settles (optionally only for payment
+  methods matching `target`, e.g. `stripe*`). With value 0 the goal is worth
+  what was paid. The completion is attributed to the visit that sent
+  `checkout_completed` for that order, else the customer's latest visit.
 
-Stats at `GET /ees/goals/stats?days=30&channelId=1`.
+*Suggestions* proposes ready-made goals from the last 30 days of traffic
+(the order confirmation page seen most, "Payment received", the forms sent
+most). REST: `POST /ees/goals` (`{ name, type, urlPattern, target,
+valueMinor, channelId }`), `PUT|DELETE /ees/goals/:id`,
+`GET /ees/goals/stats?days=30&channelId=1`, `GET /ees/goals/suggestions`.
 
 ### Privacy controls
 
@@ -252,7 +285,60 @@ Stats at `GET /ees/goals/stats?days=30&channelId=1`.
   body field or an `ees_consent=1` cookie before ingest.
 - `dropBotEvents: false` (default) — flip on to skip bot UAs entirely.
 
+**Visitors → Settings** (0.20.0, `GET|POST /ees/settings`; changes need
+`UpdateSettings` in the default channel):
+
+- **Cookieless mode** (off by default) — no cookies, no ids in the
+  browser's storage (hulo.js stops using localStorage), no credentials on
+  the beacon. A visit is an HMAC of address + browser + site under a salt of
+  the current UTC day; the salt is replaced every day and the old one
+  deleted, so ids cannot be recomputed or linked across days. Visitors are
+  therefore counted per day.
+- **Exclude staff** (on by default) — signed-in administrators record
+  nothing. **Excluded addresses** — IPs / CIDR ranges (v4 and v6). Staff can
+  also exclude one browser by opening a storefront page with
+  `?hulo_exclude=1` (`=0` undoes it).
+- **Strip private URL parameters** (on by default) — `token`, `key`, `t`,
+  `e`, `email`, `password`, `auth`, `code`, mailing-tool subscriber ids and
+  any parameter whose value is an e-mail address are removed from stored
+  URLs and referrers; add more names in *Also strip*.
+- **Personal data** — export one person's data as JSON
+  (`GET /ees/privacy/export?email=|customerId=|visitorId=`, `ReadCustomer`)
+  or erase it (`POST /ees/privacy/erase`, `DeleteCustomer`): visits under
+  every visitor id their customer record was seen with, abandoned carts,
+  server-side cart captures and payment-goal completions. The reminder
+  opt-out of the address is kept, so they are never e-mailed again.
+
 ### Cart abandonment (since 0.8.0)
+
+**0.20.0 (licensed):**
+
+- **Verified e-mail capture.** Each cart records whether its address is
+  verified: the signed-in customer's own address, the Vendure order's
+  customer (server-side capture), or an address typed in the cart's own
+  session after it reached the checkout, while its network has attached
+  fewer than 3 addresses in 24 hours. Unverified addresses are still stored
+  (hosts may read them) but reminders skip them unless *Remind verified
+  addresses only* is off.
+- **Server-side cart capture** (off by default, Settings → Carts). Carts
+  are read from Vendure's own order-line events; an order idle for the
+  abandonment window in `AddingItems` / `ArrangingPayment` becomes an
+  abandoned cart bound to the order (the recovery link resumes it), and
+  `OrderPlacedEvent` converts it. No storefront `cart_snapshot` needed.
+- **Reminder e-mails** (off by default, Settings → Carts): a first reminder
+  after N hours and an optional second, for carts above a minimum value.
+  Deliverability and consent rules: verified addresses only (default),
+  never to an opted-out address (checked at send time), at most two per
+  cart (claimed with compare-and-set, never sent twice), one sequence per
+  address per 7 days, at most `maxPerRun` per 5-minute scan, a plain-text
+  part, an unsubscribe link and RFC 8058 `List-Unsubscribe` /
+  `List-Unsubscribe-Post` headers. Needs SMTP (`SMTP_*` env with nodemailer),
+  `abandonment.recoveryLinkSecret` and an opt-out secret; without them
+  nothing is sent. Hosts that already send their own reminders should leave
+  this off.
+- **Visitors → Abandoned carts** lists carts with their value, status,
+  verified flag and reminders sent, mints recovery links, dismisses carts
+  and manages the opt-out list.
 
 Detects sessions that got as far as putting items in the cart but
 never fired `checkout_completed`. Turns them into `AbandonedCart` rows
@@ -415,6 +501,11 @@ events with full enrichment, streamed in id order (up to 200 000 rows);
 
 ### Weekly report, setup checklist and dashboard widget (since 0.19.0)
 
+Since 0.20.0 the weekly report and the set-up checklist are licensed (or
+evaluation) features: on the free tier nothing is mailed, *Send me a test*
+answers 402 and `GET /ees/setup` returns no items (`premium: false`). The
+report's settings are kept and it resumes when a licence is active.
+
 **Weekly report.** Every Monday at 08:00 (server-local time) the worker
 emails a short "what Visitor Analytics did for you" report for the previous
 seven days: unique visitors, sessions, page views, abandoned carts detected,
@@ -499,7 +590,13 @@ Vendure admin session cookie):
 | `DELETE`| `/ees/goals/:id` | delete a goal |
 | `GET`  | `/ees/goals/stats` | per-goal completion stats |
 | `GET`  | `/ees/visitors/status` | version + update status |
-| `GET`  | `/ees/licence/status` | licence/evaluation state + lifecycle notice, premium list, 30-day figures, free-tier cap (0.19.0) |
+| `GET`  | `/ees/licence/status` | licence/evaluation state + lifecycle notice, premium list, 30-day figures (0.19.0; `capReached` is always false since 0.20.0) |
+| `GET`  | `/ees/visitors/landing-pages` | entry pages with sessions, bounce rate, conversions (0.20.0) |
+| `GET`  | `/ees/goals/suggestions` | ready-made goals from recent traffic (0.20.0, licensed) |
+| `GET`  | `/ees/settings` | Settings tab: settings + what the install has configured (0.20.0, `ReadSettings`) |
+| `POST` | `/ees/settings` | partial settings update (0.20.0, `UpdateSettings`, default channel) |
+| `GET`  | `/ees/privacy/export` | one person's data as JSON (0.20.0, `ReadCustomer`, default channel) |
+| `POST` | `/ees/privacy/erase` | erase it (0.20.0, `DeleteCustomer`, default channel) |
 | `POST` | `/ees/eval/remind-me` | `{ email }` — email the admin before the evaluation ends (0.19.0, `UpdateSettings`) |
 | `GET`  | `/ees/setup` | setup checklist items (0.19.0) |
 | `GET`  | `/ees/widget` | dashboard widget payload, last 7 days (0.19.0) |
