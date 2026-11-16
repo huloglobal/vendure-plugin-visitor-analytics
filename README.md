@@ -336,6 +336,15 @@ valueMinor, channelId }`), `PUT|DELETE /ees/goals/:id`,
   `abandonment.recoveryLinkSecret` and an opt-out secret; without them
   nothing is sent. Hosts that already send their own reminders should leave
   this off.
+- **Reminder e-mail design** (since 0.21.0): a 600px card with your logo (or
+  the shop name), a 3px accent bar, the basket with line prices and total, a
+  *Return to your basket* button, a "Kind regards" sign-off with your support
+  address and a footer with your legal text and the unsubscribe link. Inline
+  styles only, plus a plain-text part. Set the accent colour, logo URL,
+  support e-mail and footer text in Settings → Carts, or install-wide with
+  the plugin option `email: { accentColor, logoUrl, logoWidth, supportEmail,
+  footerText }` (Settings win). *Preview the reminder e-mail* renders it with
+  the saved settings and a sample basket.
 - **Visitors → Abandoned carts** lists carts with their value, status,
   verified flag and reminders sent, mints recovery links, dismisses carts
   and manages the opt-out list.
@@ -444,7 +453,8 @@ per session so runaway bot sessions can't skew the table.
 Denormalised — we store both `(A, B)` and `(B, A)` — so read-side
 lookups are one indexed scan.
 
-Three endpoints, all safe from the storefront (no PII):
+Three endpoints, all safe from the storefront (no PII). Since 0.21.0 they
+share a rate limit of 120 requests a minute per client IP (429 above it):
 
 | Endpoint | Use |
 | --- | --- |
@@ -500,6 +510,11 @@ events with full enrichment, streamed in id order (up to 200 000 rows);
 `GET /ees/abandoned-carts/export.csv?days=N` streams up to 50 000 carts.
 
 ### Weekly report, setup checklist and dashboard widget (since 0.19.0)
+
+The report and the dashboard widget total every channel, so since 0.21.0
+only administrators of the default channel (or SuperAdmins) can read the
+report settings, change the recipient, preview it or send a test; the widget
+shows channel-scoped administrators no store-wide figures.
 
 Since 0.20.0 the weekly report and the set-up checklist are licensed (or
 evaluation) features: on the free tier nothing is mailed, *Send me a test*

@@ -5,6 +5,7 @@ import { Request, Response } from 'express';
 import { RateLimiter, adapterFor } from '@huloglobal/vendure-licence-sdk';
 import { AbandonedCartService } from './abandoned-cart.service';
 import { noStore } from './no-store';
+import { wantsHtml } from './route-guards';
 import { getRealIp } from './proxy-headers';
 import { getOptions } from './plugin';
 import { readableChannels, scopeChannel } from './channel-scope';
@@ -31,6 +32,7 @@ import { sanitiseOrderCode, verifyOptOutToken } from './recovery-tokens';
  *   POST /ees/recover-cart/converted         — `{ t, orderCode }` attribution when the restored cart checks out (0.18.0)
  *   GET|POST /ees/abandoned-carts/opt-out?e= — email opt-out (RFC 8058 one-click on POST) (0.18.0)
  */
+
 @Controller('ees')
 export class AbandonedCartController implements OnApplicationBootstrap {
     private limiter: RateLimiter | null = null;
@@ -287,6 +289,12 @@ export class AbandonedCartController implements OnApplicationBootstrap {
         const token = tokenRaw || body?.e || (typeof body === 'string' ? '' : undefined);
         const result = await this.applyOptOut(req, token);
         res.setHeader('cache-control', 'no-store');
+        // The confirm page's form is a browser navigation: answer with a page, not raw JSON
+        // (0.21.0 fix). RFC 8058 one-click POSTs from mail providers still get JSON.
+        if (wantsHtml(req)) {
+            res.setHeader('content-type', 'text/html; charset=utf-8');
+            return res.status(result.ok ? 200 : 400).send(this.optOutPage(result.ok));
+        }
         res.status(result.ok ? 200 : 400).json(result);
     }
 
@@ -302,14 +310,14 @@ export class AbandonedCartController implements OnApplicationBootstrap {
     private optOutPage(ok: boolean, confirmAction?: string): string {
         const title = confirmAction ? 'Unsubscribe from basket reminders?' : ok ? 'You have been unsubscribed' : 'This link is not valid';
         const body = confirmAction
-            ? `<form method="post" action="${confirmAction}"><button type="submit" style="background:#1b1f24;color:#fff;border:0;border-radius:8px;padding:12px 22px;font-size:15px;cursor:pointer">Yes, unsubscribe me</button></form>`
+            ? `<form method="post" action="${confirmAction}"><button type="submit" style="background:#111827;color:#fff;border:0;border-radius:8px;padding:12px 24px;font-size:15px;font-weight:bold;cursor:pointer">Yes, unsubscribe me</button></form>`
             : ok
             ? 'We will not send you any more reminders about items left in your basket. You can close this page.'
             : 'The unsubscribe link is incomplete or has been altered. Please use the link exactly as it appears in the email.';
         return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`
             + `<meta name="robots" content="noindex"><title>${title}</title>`
-            + `<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f6f7f9;color:#1b1f24;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}`
-            + `main{background:#fff;border:1px solid #e3e6ea;border-radius:12px;padding:32px 36px;max-width:440px;box-shadow:0 2px 12px rgba(0,0,0,.05)}h1{font-size:20px;margin:0 0 12px}p{margin:0;line-height:1.5;color:#4b5563}</style>`
+            + `<style>body{font-family:Arial,Helvetica,sans-serif;background:#f3f4f6;color:#111827;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}`
+            + `main{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:28px;max-width:440px}h1{font-size:22px;line-height:28px;margin:0 0 12px}p{margin:0;font-size:14px;line-height:22px;color:#374151}</style>`
             + `</head><body><main><h1>${title}</h1><p>${body}</p></main></body></html>`;
     }
 

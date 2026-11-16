@@ -6,6 +6,7 @@ interface WidgetData {
     tier: 'paid' | 'trial' | 'free';
     notice: { kind: string; message: string; daysLeft: number } | null;
     stats: Array<{ label: string; value: string }>;
+    scoped?: boolean;
     route: string;
 }
 
@@ -26,6 +27,7 @@ interface WidgetData {
             </div>
             <div class="notice" *ngIf="data?.notice?.message">{{ data?.notice?.message }}</div>
             <div class="muted" *ngIf="!data && !error">Loading…</div>
+            <div class="muted" *ngIf="data?.scoped">Store-wide figures are shown to administrators of the default channel.</div>
             <div class="muted" *ngIf="error">Could not load visitor stats.</div>
             <a class="open" [routerLink]="[data?.route || '/extensions/visitors']">Open Visitor Analytics →</a>
         </div>

@@ -22,6 +22,14 @@ export interface ReminderSettings {
     subject: string;
     /** Shop name used in the e-mail (default: the channel code). */
     shopName: string;
+    /** 0.21.0 e-mail design: accent colour `#rrggbb` (empty = plugin option `email.accentColor`, else #155dfc). */
+    accentColor: string;
+    /** https logo URL shown in the e-mail header (empty = plugin option `email.logoUrl`, else the shop name as text). */
+    logoUrl: string;
+    /** Support address in the sign-off (empty = plugin option `email.supportEmail`, else none). */
+    supportEmail: string;
+    /** Footer / legal text (empty = plugin option `email.footerText`, else none). */
+    footerText: string;
 }
 
 export interface VaSettings {
@@ -52,6 +60,10 @@ export const DEFAULT_REMINDERS: ReminderSettings = {
     maxPerRun: 20,
     subject: 'You left something in your basket',
     shopName: '',
+    accentColor: '',
+    logoUrl: '',
+    supportEmail: '',
+    footerText: '',
 };
 
 export const DEFAULT_VA_SETTINGS: VaSettings = {
@@ -73,6 +85,16 @@ const int = (v: unknown, fallback: number, min: number, max: number) => {
 const bool = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback);
 const text = (v: unknown, fallback: string, max: number) => (typeof v === 'string' ? v.replace(/[\r\n\t]+/g, ' ').trim().slice(0, max) : fallback);
 
+/** `#rrggbb` or '' (an invalid value clears the field rather than keeping junk). */
+const hex = (v: unknown, fallback: string) => (typeof v === 'string' ? (/^#[0-9a-f]{6}$/i.test(v.trim()) ? v.trim().toLowerCase() : '') : fallback);
+const url = (v: unknown, fallback: string) => {
+    if (typeof v !== 'string') return fallback;
+    const t = v.trim();
+    if (!t) return '';
+    try { const u = new URL(t); return (u.protocol === 'https:' || u.protocol === 'http:') && t.length <= 500 ? u.toString() : ''; } catch { return ''; }
+};
+const email = (v: unknown, fallback: string) => (typeof v === 'string' ? (/^[^\s@<>"]{1,64}@[^\s@<>"]{1,190}\.[^\s@<>"]{2,}$/.test(v.trim()) ? v.trim().toLowerCase() : '') : fallback);
+
 /** Merge `patch` over `base`, keeping only known keys with sane values. */
 export function sanitiseSettings(patch: any, base: VaSettings = DEFAULT_VA_SETTINGS): VaSettings {
     const p = patch && typeof patch === 'object' ? patch : {};
@@ -86,6 +108,10 @@ export function sanitiseSettings(patch: any, base: VaSettings = DEFAULT_VA_SETTI
         maxPerRun: int(r.maxPerRun, br.maxPerRun, 1, 200),
         subject: text(r.subject, br.subject, 150) || DEFAULT_REMINDERS.subject,
         shopName: text(r.shopName, br.shopName, 100),
+        accentColor: hex(r.accentColor, br.accentColor ?? ''),
+        logoUrl: url(r.logoUrl, br.logoUrl ?? ''),
+        supportEmail: email(r.supportEmail, br.supportEmail ?? ''),
+        footerText: typeof r.footerText === 'string' ? r.footerText.replace(/\r\n?/g, '\n').replace(/[\t\u0000-\u0009\u000b-\u001f]+/g, ' ').trim().slice(0, 500) : (br.footerText ?? ''),
     };
     if (reminders.secondAfterHours && reminders.secondAfterHours <= reminders.firstAfterHours) reminders.secondAfterHours = 0;
     return {

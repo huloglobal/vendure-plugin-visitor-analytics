@@ -7,6 +7,8 @@ import { VaPrivacyService } from './privacy.service';
 import { readableChannels } from './channel-scope';
 import { noStore } from './no-store';
 import { getOptions } from './plugin';
+import { composeReminder } from './reminder-mail';
+import { reminderBrand } from './cart-reminders.service';
 
 function requireAdmin(ctx: RequestContext, res: Response, perms: Permission[]): boolean {
     if (!ctx?.activeUserId) { res.status(401).json({ error: 'Authentication required' }); return false; }
@@ -59,6 +61,26 @@ export class VaSettingsController {
         if (!requireAllChannels(ctx, res, 'UpdateSettings')) return;
         if (!body || typeof body !== 'object') return res.status(400).json({ error: 'settings object required' });
         return res.json({ settings: await this.settings.update(body) });
+    }
+
+    /** The abandoned-cart reminder e-mail rendered with the saved settings and a sample basket (0.21.0). */
+    @Get('settings/reminder-preview')
+    async reminderPreview(@Ctx() ctx: RequestContext, @Res() res: Response, @Query('step') stepRaw?: string) {
+        noStore(res);
+        if (!requireAdmin(ctx, res, [Permission.ReadSettings])) return;
+        const r = (await this.settings.get()).reminders;
+        const shop = r.shopName || 'Your shop';
+        const mail = composeReminder({
+            step: stepRaw === '2' ? 2 : 1, shop, subject: r.subject,
+            items: [{ qty: 1, name: 'Sample product', unitPriceMinor: 2400 }, { qty: 2, name: 'Another sample product', unitPriceMinor: 650 }],
+            totalMinor: 3700, currency: 'GBP',
+            recoveryUrl: 'https://example.com/cart/restore?t=sample', optOutUrl: 'https://example.com/ees/abandoned-carts/opt-out?e=sample',
+            brand: reminderBrand(r, shop),
+        });
+        res.setHeader('content-type', 'text/html; charset=utf-8');
+        // The preview is opened in a new admin tab: no scripts, no framing.
+        res.setHeader('content-security-policy', "default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; frame-ancestors 'none'");
+        return res.send(mail.html);
     }
 
     @Get('privacy/export')

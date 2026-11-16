@@ -1,4 +1,7 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Req } from '@nestjs/common';
+import { Request } from 'express';
+import { assertRecsBudget as budget } from './route-guards';
+import { getOptions } from './plugin';
 import { Ctx, RequestContext, Allow, Permission } from '@vendure/core';
 import { assertAdminApiSession } from './admin-session';
 import { RecommendationsService } from './recommendations.service';
@@ -13,6 +16,7 @@ import { RecommendationsService } from './recommendations.service';
  */
 const TRENDING_CACHE = new Map<string, { items: any[]; exp: number }>();
 
+
 @Controller('ees')
 export class RecommendationsController {
     constructor(private readonly service: RecommendationsService) {}
@@ -23,10 +27,12 @@ export class RecommendationsController {
      */
     @Get('recommendations/also-viewed')
     async alsoViewed(
+        @Req() req: Request,
         @Query('productId') pRaw?: string,
         @Query('channelId') chRaw?: string,
         @Query('limit')     lRaw?: string,
     ) {
+        budget(req, getOptions().trustedIpHeaders || []);
         const productId = parseInt(pRaw || '0', 10);
         if (!productId) return { error: 'productId-required' };
         const channelId = parseInt(chRaw || '1', 10) || 1;
@@ -44,11 +50,13 @@ export class RecommendationsController {
      */
     @Get('recommendations/personal')
     async personal(
+        @Req() req: Request,
         @Query('visitorId') vRaw?: string,
         @Query('channelId') chRaw?: string,
         @Query('limit')     lRaw?: string,
     ) {
-        const visitorId = String(vRaw || '').trim();
+        budget(req, getOptions().trustedIpHeaders || []);
+        const visitorId = String(vRaw || '').trim().slice(0, 64);
         if (!visitorId) return { error: 'visitorId-required' };
         const channelId = parseInt(chRaw || '1', 10) || 1;
         const limit = parseInt(lRaw || '10', 10) || 10;
@@ -62,10 +70,12 @@ export class RecommendationsController {
      */
     @Get('recommendations/trending')
     async trending(
+        @Req() req: Request,
         @Query('channelId') chRaw?: string,
         @Query('hours')     hRaw?: string,
         @Query('limit')     lRaw?: string,
     ) {
+        budget(req, getOptions().trustedIpHeaders || []);
         const channelId = parseInt(chRaw || '1', 10) || 1;
         // Public and uncached before: a GROUP BY over a month of events per call. Cap the window and memoise for a minute.
         const hours = Math.min(Math.max(1, parseInt(hRaw || '24', 10) || 24), 24 * 7);

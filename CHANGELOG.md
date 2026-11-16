@@ -5,6 +5,35 @@ documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project
 adheres to [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] — 2026-11-16
+
+### Changed
+- **Abandoned-cart reminder e-mails restyled** to the shared HULO e-mail design: a 600px white card with the
+  merchant's logo (or shop name) and a 3px accent bar, the basket with line prices and total in an info box,
+  a *Return to your basket* button, a "Kind regards" sign-off with the shop name and support address, and a
+  footer strip with the merchant's legal text and the unsubscribe link. Inline styles and tables only; the
+  plain-text part carries the same content. Lists at most eight items and says how many more.
+- New optional design settings (Visitors → Settings → Carts): accent colour (default `#155dfc`), logo URL,
+  support e-mail and footer text, with install-wide defaults from the new plugin option
+  `email: { accentColor, logoUrl, logoWidth, supportEmail, footerText }`. Existing installs keep their
+  settings; the new fields start empty.
+- *Preview the reminder e-mail* (`GET /ees/settings/reminder-preview`, ReadSettings): the e-mail rendered with
+  the saved settings and a sample basket, served with a no-script Content-Security-Policy.
+- The unsubscribe page uses the same colours and type.
+- Dependencies: `geolite2-redist` ^3.1.4, `ua-parser-js` ^1.0.41; dev: `typeorm` ^0.3.31, `typescript` ^5.9.3,
+  `vitest` ^2.1.9, `nodemailer` ^6.10.1. Majors held back: `@maxmind/geoip2-node` 7, `geolite2-redist` 4,
+  `ua-parser-js` 2, `nodemailer` 10, `typescript` 6/7, `vitest` 5 (the harness pins 2.1.9), `typeorm` 1.
+
+### Fixed
+- **The unsubscribe confirm button showed raw JSON.** The page's form POST now gets an HTML "You have been
+  unsubscribed" page; RFC 8058 one-click POSTs from mail providers still get JSON.
+- **Channel-scoped administrators could read and redirect the store-wide weekly report**: change its recipient,
+  send it to any address, preview it. Those routes now need an administrator of the default channel (or a
+  SuperAdmin); the dashboard widget shows channel-scoped administrators no store-wide figures.
+- **The public recommendation endpoints had no rate limit** (`also-viewed`, `personal`, `trending`): 120
+  requests a minute per client IP across the three, then 429. `visitorId` is capped at 64 characters.
+- A shop name containing `$&` or `$'` was mangled in the reminder subject (string replacement patterns).
+
 ## [0.20.0] — 2026-11-13
 
 Parity with HULO Visitor Analytics for WordPress.

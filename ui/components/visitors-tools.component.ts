@@ -188,7 +188,12 @@ import { NotificationService } from '@vendure/admin-ui/core';
                         <label>At most per 5 minutes <input class="form-input" type="number" min="1" max="200" [(ngModel)]="cfg.reminders.maxPerRun"></label>
                         <label>Subject <input class="form-input" [(ngModel)]="cfg.reminders.subject"></label>
                         <label>Shop name <input class="form-input" [(ngModel)]="cfg.reminders.shopName" placeholder="channel code"></label>
+                        <label>Accent colour <input class="form-input" [(ngModel)]="cfg.reminders.accentColor" placeholder="#155dfc"></label>
+                        <label>Logo URL (https) <input class="form-input" [(ngModel)]="cfg.reminders.logoUrl" placeholder="shop name as text"></label>
+                        <label>Support e-mail <input class="form-input" [(ngModel)]="cfg.reminders.supportEmail" placeholder="none"></label>
+                        <label>Footer text <input class="form-input" [(ngModel)]="cfg.reminders.footerText" placeholder="e.g. company name and address"></label>
                     </div>
+                    <p><button class="gbtn gbtn-sm" (click)="previewReminder()">Preview the reminder e-mail</button> <span class="muted">(saved settings, sample basket)</span></p>
                     <p class="muted">Needs SMTP ({{ env?.smtp ? 'set' : 'not set' }}), <code>abandonment.recoveryLinkSecret</code> ({{ env?.recoveryLinkSecret ? 'set' : 'not set' }}) and an opt-out secret ({{ env?.optOutSecret ? 'set' : 'not set' }}). Each cart gets at most two reminders, an address at most one sequence a week; opted-out addresses never; every e-mail carries an unsubscribe link and one-click List-Unsubscribe headers.</p>
                 </div></div>
             </div>
@@ -334,6 +339,15 @@ export class VisitorsToolsComponent implements OnChanges {
             error: e => { this.busy = false; this.notify.error(this.err(e, 'Could not save the settings')); this.cdr.markForCheck(); },
         });
     }
+    /** The reminder e-mail with the saved settings and a sample basket, fetched through the authenticated client. */
+    previewReminder() {
+        const w = window.open('', '_blank');
+        this.http.get('/ees/settings/reminder-preview', { responseType: 'text' }).subscribe({
+            next: (html: any) => { if (w) { w.document.open(); w.document.write(String(html)); w.document.close(); } },
+            error: e => { w?.close(); this.notify.error(this.err(e, 'Could not render the preview')); },
+        });
+    }
+
     private subjectQuery(): any {
         const s: any = {};
         if (this.subject.email) s.email = String(this.subject.email).trim();

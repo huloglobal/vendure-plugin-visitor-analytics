@@ -4,8 +4,23 @@ import { adapterFor, smtpTransportFromEnv } from '@huloglobal/vendure-licence-sd
 import { AbandonedCartService } from './abandoned-cart.service';
 import { ReminderSettings } from './va-settings';
 import { hashEmail } from './recovery-tokens';
+import { EmailBrand } from './email-layout';
+import { getOptions } from './plugin';
 
 const loggerCtx = 'HuloCartReminders';
+
+/** E-mail branding: the admin's Settings first, then the plugin's `email` options. */
+export function reminderBrand(r: ReminderSettings, shop: string): EmailBrand {
+    const o: any = (getOptions() as any).email || {};
+    return {
+        storeName: shop,
+        accentColor: r.accentColor || o.accentColor || null,
+        logoUrl: r.logoUrl || o.logoUrl || null,
+        logoWidth: o.logoWidth || null,
+        supportEmail: r.supportEmail || o.supportEmail || null,
+        footerText: r.footerText || o.footerText || null,
+    };
+}
 
 /** At most one reminder sequence per address in this window, however many carts it has. */
 export const ADDRESS_COOLDOWN_DAYS = 7;
@@ -64,7 +79,8 @@ export class CartRemindersService {
             }
             let items: any[] = [];
             try { items = JSON.parse(row.itemsJson || '[]'); } catch { items = []; }
-            const mail = composeReminder({ step, shop: r.shopName || (row.channelCode && row.channelCode !== '__default_channel__' ? row.channelCode : 'our shop'), subject: r.subject, items, totalMinor: Number(row.totalMinor) || 0, currency: row.currency || 'GBP', recoveryUrl, optOutUrl });
+            const shop = r.shopName || (row.channelCode && row.channelCode !== '__default_channel__' ? row.channelCode : 'our shop');
+            const mail = composeReminder({ step, shop, subject: r.subject, items, totalMinor: Number(row.totalMinor) || 0, currency: row.currency || 'GBP', recoveryUrl, optOutUrl, brand: reminderBrand(r, shop) });
             try {
                 await transport.sendMail({ to: row.email, ...mail, headers } as any);
                 sent++;

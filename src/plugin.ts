@@ -81,6 +81,12 @@ export interface VisitorAnalyticsPluginOptions {
      *  `cart_snapshot` custom events for anything to be detected. See
      *  the README for the recommended storefront helper. */
     abandonment?: AbandonmentOptions;
+
+    // ── E-mail design (0.21.0) ──────────────────────────────────────────
+    /** Defaults for the abandoned-cart reminder e-mails; each can be
+     *  overridden in Visitors → Settings. `accentColor` is `#rrggbb`
+     *  (default `#155dfc`); without `logoUrl` the shop name is shown. */
+    email?: { accentColor?: string; logoUrl?: string; logoWidth?: number; supportEmail?: string; footerText?: string };
 }
 
 const HULO_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----

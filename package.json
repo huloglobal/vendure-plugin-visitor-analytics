@@ -1,6 +1,6 @@
 {
     "name": "@huloglobal/vendure-plugin-visitor-analytics",
-    "version": "0.20.0",
+    "version": "0.21.0",
     "description": "Self-hosted visitor analytics for Vendure storefronts: pageviews, journeys, funnels, UTM attribution, conversion goals and bot filtering, plus abandoned-cart recovery, product recommendations and site-search analytics. Privacy-first defaults.",
     "license": "AGPL-3.0-only",
     "author": "Wayne Garrison <wayne@garrison.me.uk>",
@@ -30,9 +30,9 @@
     },
     "dependencies": {
         "@maxmind/geoip2-node": "^5.0.0",
-        "geolite2-redist": "^3.1.0",
+        "geolite2-redist": "^3.1.4",
         "graphql-tag": "^2.12.7",
-        "ua-parser-js": "^1.0.37",
+        "ua-parser-js": "^1.0.41",
         "@huloglobal/vendure-licence-sdk": "^0.15.6"
     },
     "peerDependencies": {
@@ -45,10 +45,10 @@
         "@huloglobal/vendure-licence-sdk": "^0.15.6",
         "@nestjs/common": "^12.0.1",
         "@vendure/core": "3.8.2",
-        "typeorm": "^0.3.0",
-        "typescript": "^5.4.0",
-        "vitest": "^2.0.0",
-        "nodemailer": "^6.9.0"
+        "typeorm": "^0.3.31",
+        "typescript": "^5.9.3",
+        "vitest": "^2.1.9",
+        "nodemailer": "^6.10.1"
     },
     "keywords": [
         "vendure",

@@ -94,7 +94,8 @@ function channelWhere(channelId: number | null, alias?: string): { sql: string; 
 }
 
 import { getRealIp, getResolvedCountry, getResolvedRegion } from './proxy-headers';
-import { scopeChannel } from './channel-scope';
+import { readableChannels, scopeChannel } from './channel-scope';
+import { requireAllChannelsAdmin } from './route-guards';
 
 const PLUGIN_ID_FOR_STORE = 'vendure-plugin-visitor-analytics';
 function realIp(req: Request): string | null { return getRealIp(req, getOptions().trustedIpHeaders || []); }
@@ -245,18 +246,23 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     @Get('widget')
     async widget(@Ctx() ctx: RequestContext, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
-        return res.json(await this.engagement.widget());
+        const w = await this.engagement.widget();
+        // Store-wide totals are not shown to channel-scoped administrators.
+        if (readableChannels(ctx as any, 'ReadCustomer') !== null) return res.json({ ...w, stats: [], scoped: true });
+        return res.json(w);
     }
 
     @Get('digest/settings')
     async digestSettings(@Ctx() ctx: RequestContext, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
+        if (!requireAllChannelsAdmin(ctx, res)) return;
         return res.json(await this.engagement.settings());
     }
 
     @Post('digest/settings')
     async digestUpdate(@Ctx() ctx: RequestContext, @Res() res: Response, @Body() body: any) {
         if (!requireAdmin(ctx, res, [Permission.UpdateSettings])) return;
+        if (!requireAllChannelsAdmin(ctx, res, 'UpdateSettings')) return;
         const patch: { enabled?: boolean; recipient?: string | null } = {};
         if (typeof body?.enabled === 'boolean') patch.enabled = body.enabled;
         if (body && 'recipient' in body) patch.recipient = body.recipient === null ? null : String(body.recipient || '');
@@ -272,6 +278,7 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     @Post('digest/send-test')
     async digestSendTest(@Ctx() ctx: RequestContext, @Res() res: Response, @Body() body: any) {
         if (!requireAdmin(ctx, res, [Permission.UpdateSettings])) return;
+        if (!requireAllChannelsAdmin(ctx, res, 'UpdateSettings')) return;
         const to = String(body?.to || '').trim().slice(0, 320) || null;
         if (to && !/^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/.test(to)) {
             return res.status(400).json({ sent: false, to, reason: 'Enter a valid email address', subject: '' });
@@ -285,6 +292,7 @@ export class VisitorTrackingController implements OnApplicationBootstrap, OnModu
     @Get('digest/preview')
     async digestPreview(@Ctx() ctx: RequestContext, @Res() res: Response) {
         if (!requireAdmin(ctx, res)) return;
+        if (!requireAllChannelsAdmin(ctx, res)) return;
         const mail = await this.engagement.preview();
         res.setHeader('content-type', 'text/html; charset=utf-8');
         res.setHeader('cache-control', 'no-store');

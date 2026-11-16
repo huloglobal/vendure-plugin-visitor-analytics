@@ -137,7 +137,7 @@ run('@huloglobal/vendure-plugin-visitor-analytics 0.20.0 (MariaDB)', () => {
             // Reminders are off by default, and need SMTP when on.
             const reminders = (server as any).app.get(CartRemindersService) as CartRemindersService;
             expect(await reminders.sendDue({ enabled: false } as any, true)).toEqual({ sent: 0, skipped: 'disabled' });
-            expect((await reminders.sendDue({ enabled: true, firstAfterHours: 1, secondAfterHours: 0, minValueMinor: 0, maxPerRun: 5, subject: 's', shopName: '' }, true)).sent).toBe(0);
+            expect((await reminders.sendDue({ enabled: true, firstAfterHours: 1, secondAfterHours: 0, minValueMinor: 0, maxPerRun: 5, subject: 's', shopName: '', accentColor: '', logoUrl: '', supportEmail: '', footerText: '' }, true)).sent).toBe(0);
         } finally { premium.mockReturnValue(false); }
     });
 
@@ -146,6 +146,27 @@ run('@huloglobal/vendure-plugin-visitor-analytics 0.20.0 (MariaDB)', () => {
         expect(setup).toMatchObject({ premium: false, items: [] });
         const t = await fetch(`${BASE}/ees/digest/send-test`, { method: 'POST', headers: auth(), body: JSON.stringify({ to: 'me@example.test' }) });
         expect(t.status).toBe(402);
+    });
+
+    it('0.21.0: reminder e-mail preview uses the saved design settings; admin only', async () => {
+        expect([401, 403]).toContain((await fetch(`${BASE}/ees/settings/reminder-preview`)).status);
+        const saved: any = await (await fetch(`${BASE}/ees/settings`, { method: 'POST', headers: auth(), body: JSON.stringify({ reminders: { shopName: 'Pen <Shop>', accentColor: '#0a7d32', logoUrl: 'javascript:alert(1)', supportEmail: 'help@pens.test', footerText: 'Pens Ltd' } }) })).json();
+        expect(saved.settings.reminders).toMatchObject({ accentColor: '#0a7d32', logoUrl: '', supportEmail: 'help@pens.test' });
+        const r = await fetch(`${BASE}/ees/settings/reminder-preview`, { headers: auth() });
+        expect(r.status).toBe(200);
+        expect(r.headers.get('content-security-policy')).toContain("default-src 'none'");
+        const html = await r.text();
+        expect(html).toContain('border-bottom:3px solid #0a7d32');
+        expect(html).toContain('Pen &lt;Shop&gt;');
+        expect(html).toContain('mailto:help@pens.test');
+        expect(html).toContain('Pens Ltd');
+        expect(html).not.toContain('javascript:');
+        await fetch(`${BASE}/ees/settings`, { method: 'POST', headers: auth(), body: JSON.stringify({ reminders: { shopName: '', accentColor: '', supportEmail: '', footerText: '' } }) });
+    });
+
+    it('0.21.0: public recommendation routes still answer (now rate limited)', async () => {
+        const r = await fetch(`${BASE}/ees/recommendations/trending?channelId=1`);
+        expect(r.status).toBe(200);
     });
 
     it('personal data export and erase', async () => {
